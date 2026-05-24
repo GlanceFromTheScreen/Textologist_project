@@ -1,0 +1,442 @@
+[
+  {
+    "id": 7224,
+    "op_type": "equal",
+    "base_index": 0,
+    "other_index": 0,
+    "base_token": "възвеселе",
+    "other_token": "възвеселе",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7225,
+    "op_type": "equal",
+    "base_index": 1,
+    "other_index": 1,
+    "base_token": "высоты",
+    "other_token": "высоты",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7226,
+    "op_type": "equal",
+    "base_index": 2,
+    "other_index": 2,
+    "base_token": "ѹтвержⷣенїа",
+    "other_token": "ѹтвержⷣенїа",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7227,
+    "op_type": "equal",
+    "base_index": 3,
+    "other_index": 3,
+    "base_token": "оцѣщеⷩа",
+    "other_token": "оцѣщеⷩа",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7228,
+    "op_type": "equal",
+    "base_index": 4,
+    "other_index": 4,
+    "base_token": "зрⷦ",
+    "other_token": "зрⷦ",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7229,
+    "op_type": "equal",
+    "base_index": 5,
+    "other_index": 5,
+    "base_token": "нб҃сї",
+    "other_token": "нб҃сї",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7230,
+    "op_type": "equal",
+    "base_index": 6,
+    "other_index": 6,
+    "base_token": "вїдѣнїеⷨ",
+    "other_token": "вїдѣнїеⷨ",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7231,
+    "op_type": "equal",
+    "base_index": 7,
+    "other_index": 7,
+    "base_token": "сл҃вы",
+    "other_token": "сл҃вы",
+    "base_paragraph_index": 0,
+    "char_ops": []
+  },
+  {
+    "id": 7232,
+    "op_type": "equal",
+    "base_index": 8,
+    "other_index": 8,
+    "base_token": "сл҃нце",
+    "other_token": "сл҃нце",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7233,
+    "op_type": "equal",
+    "base_index": 9,
+    "other_index": 9,
+    "base_token": "въ",
+    "other_token": "въ",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7234,
+    "op_type": "equal",
+    "base_index": 10,
+    "other_index": 10,
+    "base_token": "ѧвлеⷩе",
+    "other_token": "ѧвлеⷩе",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7235,
+    "op_type": "equal",
+    "base_index": 11,
+    "other_index": 11,
+    "base_token": "проповѣдаѧ",
+    "other_token": "проповѣдаѧ",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7236,
+    "op_type": "equal",
+    "base_index": 12,
+    "other_index": 12,
+    "base_token": "въ",
+    "other_token": "въ",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7237,
+    "op_type": "equal",
+    "base_index": 13,
+    "other_index": 13,
+    "base_token": "ісходѣ",
+    "other_token": "ісходѣ",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7238,
+    "op_type": "equal",
+    "base_index": 14,
+    "other_index": 14,
+    "base_token": "съсуⷣ",
+    "other_token": "съсуⷣ",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7239,
+    "op_type": "equal",
+    "base_index": 15,
+    "other_index": 15,
+    "base_token": "дївеⷩ",
+    "other_token": "дївеⷩ",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7240,
+    "op_type": "equal",
+    "base_index": 16,
+    "other_index": 16,
+    "base_token": "дѣла",
+    "other_token": "дѣла",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7241,
+    "op_type": "equal",
+    "base_index": 17,
+    "other_index": 17,
+    "base_token": "вшнѧⷢ",
+    "other_token": "вшнѧⷢ",
+    "base_paragraph_index": 1,
+    "char_ops": []
+  },
+  {
+    "id": 7242,
+    "op_type": "equal",
+    "base_index": 18,
+    "other_index": 18,
+    "base_token": "прѣпладѣнїеⷨ",
+    "other_token": "прѣпладѣнїеⷨ",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7243,
+    "op_type": "equal",
+    "base_index": 19,
+    "other_index": 19,
+    "base_token": "своиⷨ",
+    "other_token": "своиⷨ",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7244,
+    "op_type": "equal",
+    "base_index": 20,
+    "other_index": 20,
+    "base_token": "изсушаеⷮ",
+    "other_token": "изсушаеⷮ",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7245,
+    "op_type": "equal",
+    "base_index": 21,
+    "other_index": 21,
+    "base_token": "страну",
+    "other_token": "страну",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7246,
+    "op_type": "equal",
+    "base_index": 22,
+    "other_index": 22,
+    "base_token": "и",
+    "other_token": "и",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7247,
+    "op_type": "equal",
+    "base_index": 23,
+    "other_index": 23,
+    "base_token": "прѧмо",
+    "other_token": "прѧмо",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7248,
+    "op_type": "equal",
+    "base_index": 24,
+    "other_index": 24,
+    "base_token": "вару",
+    "other_token": "вару",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7249,
+    "op_type": "equal",
+    "base_index": 25,
+    "other_index": 25,
+    "base_token": "еⷢⷢ",
+    "other_token": "еⷢⷢ",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7250,
+    "op_type": "equal",
+    "base_index": 26,
+    "other_index": 26,
+    "base_token": "кто",
+    "other_token": "кто",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7251,
+    "op_type": "equal",
+    "base_index": 27,
+    "other_index": 27,
+    "base_token": "постоиⷮ",
+    "other_token": "постоиⷮ",
+    "base_paragraph_index": 2,
+    "char_ops": []
+  },
+  {
+    "id": 7252,
+    "op_type": "equal",
+    "base_index": 28,
+    "other_index": 28,
+    "base_token": "пещь",
+    "other_token": "пещь",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7253,
+    "op_type": "equal",
+    "base_index": 29,
+    "other_index": 29,
+    "base_token": "дыма",
+    "other_token": "дыма",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7254,
+    "op_type": "equal",
+    "base_index": 30,
+    "other_index": 30,
+    "base_token": "дѣла",
+    "other_token": "дѣла",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7255,
+    "op_type": "equal",
+    "base_index": 31,
+    "other_index": 31,
+    "base_token": "и",
+    "other_token": "и",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7256,
+    "op_type": "equal",
+    "base_index": 32,
+    "other_index": 32,
+    "base_token": "вара",
+    "other_token": "вара",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7257,
+    "op_type": "equal",
+    "base_index": 33,
+    "other_index": 33,
+    "base_token": "трегѫбо",
+    "other_token": "трегѫбо",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7258,
+    "op_type": "equal",
+    "base_index": 34,
+    "other_index": 34,
+    "base_token": "сл҃нце",
+    "other_token": "сл҃нце",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7259,
+    "op_type": "equal",
+    "base_index": 35,
+    "other_index": 35,
+    "base_token": "жегыи",
+    "other_token": "жегыи",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7260,
+    "op_type": "equal",
+    "base_index": 36,
+    "other_index": 36,
+    "base_token": "куреⷩе",
+    "other_token": "куреⷩе",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7261,
+    "op_type": "equal",
+    "base_index": 37,
+    "other_index": 37,
+    "base_token": "огнь",
+    "other_token": "огнь",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7262,
+    "op_type": "equal",
+    "base_index": 38,
+    "other_index": 38,
+    "base_token": "дыⷨ",
+    "other_token": "дыⷨ",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7263,
+    "op_type": "equal",
+    "base_index": 39,
+    "other_index": 39,
+    "base_token": "и",
+    "other_token": "и",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7264,
+    "op_type": "equal",
+    "base_index": 40,
+    "other_index": 40,
+    "base_token": "простїраа",
+    "other_token": "простїраа",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7265,
+    "op_type": "equal",
+    "base_index": 41,
+    "other_index": 41,
+    "base_token": "луча",
+    "other_token": "луча",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7266,
+    "op_type": "equal",
+    "base_index": 42,
+    "other_index": 42,
+    "base_token": "омрачиⷮ",
+    "other_token": "омрачиⷮ",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  },
+  {
+    "id": 7267,
+    "op_type": "equal",
+    "base_index": 43,
+    "other_index": 43,
+    "base_token": "очи",
+    "other_token": "очи",
+    "base_paragraph_index": 3,
+    "char_ops": []
+  }
+]

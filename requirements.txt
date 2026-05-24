@@ -1,0 +1,2 @@
+# Shared deps for notebooks / local tooling (install: pip install -r requirements.txt)
+openpyxl>=3.1.0

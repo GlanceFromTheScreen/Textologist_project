@@ -1,0 +1,144 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[russian]{babel}
+\usepackage[T2A]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{longtable}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+\title{Отчет №1: Реализация пайплайна оценки качества алгоритмов сравнения текстов}
+\author{Команда разработки NIR 2026}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Введение}
+В рамках разработки системы для текстологического анализа древнерусских текстов была поставлена задача автоматической оценки качества работы алгоритмов сравнения (diff algorithms). Для этого необходимо сопоставить результаты работы алгоритма с "эталонными" данными (ground truth), полученными из критического аппарата издания.
+
+\section{Постановка задачи}
+Цель: Разработать программный модуль и методику для автоматического сравнения вывода алгоритма с эталонными данными.
+
+Входные данные:
+\begin{enumerate}
+    \item \textbf{Критический аппарат (.docx):} Файл, содержащий базовый текст (M10) и список разночтений для различных списков (сиглов, например P81, TB, MN). Разночтения представлены построчно.
+    \item \textbf{Сырые тексты списков (.docx):} Файл, содержащий полные тексты фрагментов для каждой рукописи, но перемешанные по строкам.
+\end{enumerate}
+
+Выходные данные:
+\begin{enumerate}
+    \item DataFrame, сопоставляющий каждое слово базового текста с операцией из эталона и операцией из алгоритма.
+    \item Метрики качества (в перспективе): точность (precision), полнота (recall) определения замен, вставок и удалений.
+\end{enumerate}
+
+\section{Реализация}
+
+\subsection{Этап 1: Парсинг эталона (Parse Apparatus)}
+Был разработан скрипт \texttt{parse\_apparatus.py} для извлечения эталонных операций (Word Ops) из файла критического аппарата.
+
+\textbf{Логика работы:}
+\begin{itemize}
+    \item Скрипт читает файл \texttt{.docx}.
+    \item Игнорирует техническую разметку (надстрочные знаки).
+    \item Разбивает документ на блоки, соответствующие строкам базового текста M10.
+    \item Парсит строки с вариантами, используя разделитель \texttt{]}.
+    \item Для каждого слова базового текста определяет, есть ли для выбранного сигла (например, P81) изменение (replace, delete) или текст совпадает (equal).
+\end{itemize}
+
+\textbf{Результат:} Список \texttt{true\_values}, содержащий объекты операций с полями:
+\begin{itemize}
+    \item \texttt{op\_type}: тип операции (equal, replace, delete).
+    \item \texttt{base\_token}: слово из базового текста.
+    \item \texttt{other\_token}: слово из сравниваемого текста (или пусто при удалении).
+\end{itemize}
+
+\subsection{Этап 2: Подготовка текстов (Split Manuscripts)}
+Для запуска алгоритма необходимо иметь чистые тексты рукописей. Был создан скрипт \texttt{split\_manuscripts.py}.
+
+\textbf{Логика работы:}
+\begin{itemize}
+    \item Парсит файл, содержащий перемешанные фрагменты строк (формат: \texttt{Номер. Сигл: Текст}).
+    \item Группирует фрагменты по сиглам.
+    \item Сохраняет восстановленный текст каждой рукописи в отдельный файл (например, \texttt{data/clean/M10.docx}, \texttt{data/clean/P81.docx}).
+\end{itemize}
+
+\subsection{Этап 3: Запуск алгоритма (Algorithm Execution)}
+В Jupyter Notebook (\texttt{testing\_quality.ipynb}) реализован запуск сравнения:
+\begin{enumerate}
+    \item Загрузка очищенных текстов M10 и P81.
+    \item Токенизация (разбиение по пробелам).
+    \item Вызов функции \texttt{algo.comparison.compare\_tokens} (используется алгоритм Майерса или Левенштейна).
+    \item Получение списка \texttt{test\_values} (результат работы алгоритма).
+\end{enumerate}
+
+\subsection{Этап 4: Сопоставление результатов (Matching)}
+Основная сложность заключалась в корректном сопоставлении списка эталонных операций и списка алгоритмических операций, так как тексты содержат повторяющиеся слова.
+
+\textbf{Решение:}
+Использована библиотека \texttt{pandas}.
+\begin{enumerate}
+    \item Списки преобразованы в DataFrame.
+    \item Для каждого слова вычислен порядковый номер вхождения (\texttt{cumcount}) в рамках своего списка.
+    \item Выполнен \texttt{Left Join} таблицы \texttt{true\_values} с таблицей \texttt{test\_values} по ключам \texttt{['base\_token', 'occurrence']}.
+\end{enumerate}
+
+Это позволяет однозначно сопоставить $i$-е вхождение слова "и" в эталоне с $i$-м вхождением слова "и" в результате алгоритма.
+
+\begin{lstlisting}[language=Python, caption=Пример кода сопоставления]
+df_true['occurrence'] = df_true.groupby('base_token').cumcount()
+df_test['occurrence'] = df_test.groupby('base_token').cumcount()
+
+merged_df = pd.merge(
+    df_true,
+    df_test,
+    on=['base_token', 'occurrence'],
+    how='left',
+    suffixes=('_true', '_test')
+)
+\end{lstlisting}
+
+\section{Результаты}
+В результате работы пайплайна мы получаем таблицу, где для каждого слова базового текста можно сравнить:
+\begin{itemize}
+    \item \texttt{op\_type\_true}: Что должно было быть (по мнению эксперта).
+    \item \texttt{op\_type\_test}: Что определил алгоритм.
+\end{itemize}
+
+Это позволяет автоматически выявлять ошибки алгоритма (например, ложные срабатывания замен или пропуски изменений) и численно оценивать качество его работы на реальных исторических текстах.
+
+\end{document}

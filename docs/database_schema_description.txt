@@ -1,0 +1,202 @@
+Текстовое описание схемы базы данных приложения
+(соответствует моделям SQLAlchemy в backend/models.py; диаграмма: database_schema.svg)
+
+================================================================================
+ОБЩИЙ СМЫСЛ
+================================================================================
+База хранит пользователей, загруженные тексты и шрифты, справочник классов
+разметки с пользовательскими переопределениями, пресеты правил замены,
+а также сущности сравнения двух текстов: на уровне слов (word ops) и символов
+(char ops) с привязкой к классам.
+
+Схема PostgreSQL может быть задана переменной окружения DB_SCHEMA (см. backend/database.py);
+имена таблиц в коде — без префикса схемы.
+
+================================================================================
+ПЕРЕЧИСЛЕНИЯ (ENUM)
+================================================================================
+UserRole              admin | textologist
+SourceType            txt | docx
+FontFormat            ttf | otf | woff
+OpType                insert | delete | change  (для char-операций и правил пресета)
+WordOpType            equal | delete | insert | replace
+ComparisonAlgorithm   levenshtein | levenshtein_nested | myers
+CharOpSource          classifier | preset | manual
+
+================================================================================
+ТАБЛИЦЫ И ПОЛЯ
+================================================================================
+
+--- users ---
+Назначение: учётные записи.
+  id                  INTEGER, PK
+  username            STRING, NOT NULL, уникальный, индекс
+  password_hash       STRING, NOT NULL
+  role                UserRole, по умолчанию textologist
+  created_at          TIMESTAMP WITH TIME ZONE, server default now()
+
+Связи (исходящие по смыслу «владеет»): тексты, шрифты, пресеты, сравнения;
+также на пользователя ссылаются class_catalog (опционально), class_overrides.
+
+
+--- texts ---
+Назначение: документ пользователя с извлечёнными абзацами.
+  id                          INTEGER, PK
+  owner_user_id               INTEGER, NOT NULL, FK → users.id, индекс
+  title                       STRING, NOT NULL
+  source_type                 SourceType, NOT NULL
+  file_path                   STRING, NOT NULL
+  extracted_paragraphs_json   JSON, NOT NULL (список строк — абзацы)
+  created_at                  TIMESTAMP WITH TIME ZONE, server default now()
+
+Используется в сравнениях как base/other текст; опционально в пресетах как
+источник создания (два поля).
+
+
+--- fonts ---
+Назначение: загруженные файлы шрифтов.
+  id              INTEGER, PK
+  owner_user_id   INTEGER, NOT NULL, FK → users.id
+  name            STRING, NOT NULL
+  file_path       STRING, NOT NULL
+  format          FontFormat, NOT NULL
+  created_at      TIMESTAMP WITH TIME ZONE, server default now()
+
+Может быть выбран в сравнении (selected_font_id).
+
+
+--- class_catalog ---
+Назначение: классы разметки (глобальные или привязанные к пользователю).
+  id              INTEGER, PK
+  owner_user_id   INTEGER, NULL, FK → users.id  (NULL — «глобальный» класс)
+  code            STRING, NOT NULL (идентификатор)
+  display_name    STRING, NOT NULL
+  color_hex       STRING, NOT NULL
+  created_at      TIMESTAMP WITH TIME ZONE, server default now()
+
+Связан с переопределениями пользователя, правилами пресетов и char-операциями.
+
+
+--- class_overrides ---
+Назначение: персональные подписи/цвет/скрытие для класса из catalog.
+  id                      INTEGER, PK
+  user_id                 INTEGER, NOT NULL, FK → users.id, индекс
+  base_class_id           INTEGER, NOT NULL, FK → class_catalog.id
+  custom_display_name     STRING, NULL
+  custom_color_hex        STRING, NULL
+  hidden                  BOOLEAN, по умолчанию false
+
+
+--- presets ---
+Назначение: именованный набор правил замены.
+  id                          INTEGER, PK
+  owner_user_id               INTEGER, NOT NULL, FK → users.id
+  name                        STRING, NOT NULL
+  description                 STRING, NULL
+  created_from_text_a_id      INTEGER, NULL, FK → texts.id
+  created_from_text_b_id      INTEGER, NULL, FK → texts.id
+  created_at                  TIMESTAMP WITH TIME ZONE, server default now()
+
+Правила хранятся в preset_rules (каскадное удаление при удалении пресета на уровне ORM).
+Может быть выбран в сравнении (selected_preset_id).
+
+
+--- preset_rules ---
+Назначение: одно правило внутри пресета (тип операции, строки from/to, класс).
+  id              INTEGER, PK
+  preset_id       INTEGER, NOT NULL, FK → presets.id
+  op_type         OpType, NOT NULL
+  from_str        TEXT, NOT NULL, default ''
+  to_str          TEXT, NOT NULL, default ''
+  class_id        INTEGER, NULL, FK → class_catalog.id
+  created_at      TIMESTAMP WITH TIME ZONE, server default now()
+
+
+--- comparisons ---
+Назначение: сессия сравнения двух текстов с весами, алгоритмом и флагами.
+  id                      INTEGER, PK
+  owner_user_id           INTEGER, NOT NULL, FK → users.id
+  base_text_id            INTEGER, NOT NULL, FK → texts.id
+  other_text_id           INTEGER, NOT NULL, FK → texts.id
+  created_at              TIMESTAMP WITH TIME ZONE, server default now()
+  weight_replace          FLOAT, default 1.0
+  weight_delete           FLOAT, default 1.0
+  weight_insert           FLOAT, default 1.0
+  algorithm               ComparisonAlgorithm, default levenshtein
+  selected_font_id        INTEGER, NULL, FK → fonts.id
+  selected_preset_id      INTEGER, NULL, FK → presets.id
+  saved                   BOOLEAN, default false
+  dirty_for_preset        BOOLEAN, default false
+
+Дочерние записи: comparison_word_ops и comparison_char_ops (ORM cascade delete).
+
+
+--- comparison_word_ops ---
+Назначение: операции выравнивания на уровне слов/токенов для одного сравнения.
+  id                      INTEGER, PK
+  comparison_id           INTEGER, NOT NULL, FK → comparisons.id ON DELETE CASCADE, индекс
+  op_type                 WordOpType, NOT NULL
+  base_index              INTEGER, NULL
+  other_index             INTEGER, NULL
+  base_token              TEXT, NULL
+  other_token             TEXT, NULL
+  base_paragraph_index    INTEGER, NULL (в хранении 0-based)
+  order_index             INTEGER, NOT NULL, server default 0
+  created_at              TIMESTAMP WITH TIME ZONE, server default now()
+
+Связанные char-операции удаляются каскадно при удалении word op (FK ON DELETE CASCADE).
+
+
+--- comparison_char_ops ---
+Назначение: операции на уровне символов; опционально привязка к word op (replace).
+  id              INTEGER, PK
+  comparison_id   INTEGER, NOT NULL, FK → comparisons.id ON DELETE CASCADE, индекс
+  word_op_id      INTEGER, NULL, FK → comparison_word_ops.id ON DELETE CASCADE
+  op_type         OpType, NOT NULL
+  from_str        TEXT, NOT NULL, default ''
+  to_str          TEXT, NOT NULL, default ''
+  pos_info_json   JSON, NULL
+  class_id        INTEGER, NULL, FK → class_catalog.id
+  source          CharOpSource, default classifier
+  created_at      TIMESTAMP WITH TIME ZONE, server default now()
+  updated_at      TIMESTAMP WITH TIME ZONE, on update (nullable до первого обновления)
+
+================================================================================
+СВЯЗИ МЕЖДУ ТАБЛИЦАМИ (КРАТКО)
+================================================================================
+users.id
+  ← texts.owner_user_id
+  ← fonts.owner_user_id
+  ← class_catalog.owner_user_id (опционально)
+  ← class_overrides.user_id
+  ← presets.owner_user_id
+  ← comparisons.owner_user_id
+
+texts.id
+  ← comparisons.base_text_id
+  ← comparisons.other_text_id
+  ← presets.created_from_text_a_id (опционально)
+  ← presets.created_from_text_b_id (опционально)
+
+fonts.id
+  ← comparisons.selected_font_id (опционально)
+
+class_catalog.id
+  ← class_overrides.base_class_id
+  ← preset_rules.class_id (опционально)
+  ← comparison_char_ops.class_id (опционально)
+
+presets.id
+  ← preset_rules.preset_id
+  ← comparisons.selected_preset_id (опционально)
+
+comparisons.id
+  ← comparison_word_ops.comparison_id (CASCADE)
+  ← comparison_char_ops.comparison_id (CASCADE)
+
+comparison_word_ops.id
+  ← comparison_char_ops.word_op_id (опционально, CASCADE)
+
+================================================================================
+КОНЕЦ ОПИСАНИЯ
+================================================================================
