@@ -16,11 +16,9 @@ from . import models
 
 app = FastAPI(title="Textologist", version="0.1.0")
 
-# CORS setup
-origins = [
-    "http://localhost:3000",
-    "http://localhost:8000",
-]
+# CORS setup — comma-separated list via CORS_ORIGINS env (see .env.example)
+_default_origins = "http://localhost:3000,http://localhost:8000"
+origins = [o.strip() for o in os.getenv("CORS_ORIGINS", _default_origins).split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,

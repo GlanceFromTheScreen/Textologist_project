@@ -57,11 +57,22 @@ frontend/out/
 .next/
 out/
 *.tsbuildinfo
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # --- Environment & secrets ---
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+credentials.json
+secrets/
+
+# --- Docker ---
+docker-compose.override.yml
 
 # --- Logs & runtime ---
 *.log

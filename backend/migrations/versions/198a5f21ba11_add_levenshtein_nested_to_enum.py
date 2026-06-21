@@ -23,7 +23,7 @@ def upgrade() -> None:
     # So we use op.execute with execution_options
     
     with op.get_context().autocommit_block():
-        op.execute("ALTER TYPE comparisonalgorithm ADD VALUE 'levenshtein_nested'")
+        op.execute("ALTER TYPE comparisonalgorithm ADD VALUE IF NOT EXISTS 'levenshtein_nested'")
 
 
 def downgrade() -> None:

@@ -19,8 +19,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('comparison_word_ops', sa.Column('order_index', sa.Integer(), nullable=False, server_default='0'))
+    op.add_column(
+        'comparison_word_ops',
+        sa.Column('order_index', sa.Integer(), nullable=False, server_default='0'),
+        schema='collations',
+    )
 
 
 def downgrade() -> None:
-    op.drop_column('comparison_word_ops', 'order_index')
+    op.drop_column('comparison_word_ops', 'order_index', schema='collations')
