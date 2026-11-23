@@ -1,0 +1,23 @@
+[
+  {
+    "algorithm": "levenshtein",
+    "tokens": 192,
+    "before_seconds": 0.010494,
+    "after_seconds": 0.012207,
+    "ratio": 1.163
+  },
+  {
+    "algorithm": "levenshtein_nested",
+    "tokens": 192,
+    "before_seconds": 0.297172,
+    "after_seconds": 0.297049,
+    "ratio": 1.0
+  },
+  {
+    "algorithm": "levenshtein_v2",
+    "tokens": 192,
+    "before_seconds": 0.296374,
+    "after_seconds": 0.29588,
+    "ratio": 0.998
+  }
+]

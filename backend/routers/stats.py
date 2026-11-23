@@ -25,7 +25,8 @@ def get_comparison_stats(
     total_insert = db.query(models.ComparisonWordOp).filter(models.ComparisonWordOp.comparison_id == comp_id, models.ComparisonWordOp.op_type == models.WordOpType.insert).count()
     total_delete = db.query(models.ComparisonWordOp).filter(models.ComparisonWordOp.comparison_id == comp_id, models.ComparisonWordOp.op_type == models.WordOpType.delete).count()
     
-    totals = schemas.StatsTotals(replace=total_replace, insert=total_insert, delete=total_delete)
+    total_transpose = db.query(models.ComparisonWordOp).filter_by(comparison_id=comp_id, op_type=models.WordOpType.transpose).count()
+    totals = schemas.StatsTotals(transpose=total_transpose, replace=total_replace, insert=total_insert, delete=total_delete)
     
     # Top Word Replacements
     top_words_q = db.query(
@@ -48,7 +49,7 @@ def get_comparison_stats(
     # Ignore 'insert' as they are from other text
     base_tokens_q = db.query(models.ComparisonWordOp.base_token).filter(
         models.ComparisonWordOp.comparison_id == comp_id,
-        models.ComparisonWordOp.op_type.in_([models.WordOpType.equal, models.WordOpType.replace, models.WordOpType.delete])
+        models.ComparisonWordOp.op_type.in_([models.WordOpType.equal, models.WordOpType.replace, models.WordOpType.delete, models.WordOpType.transpose])
     ).all()
     
     char_counts: Dict[str, int] = collections.defaultdict(int)

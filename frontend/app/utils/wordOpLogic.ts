@@ -7,15 +7,23 @@ export interface CharOp {
 }
 
 export interface WordOp {
+  base_index?: number | null;
+  other_index?: number | null;
+  transpose_parts?: WordOp[] | null;
   id: number;
-  op_type: 'equal' | 'insert' | 'delete' | 'replace';
+  op_type: 'equal' | 'insert' | 'delete' | 'replace' | 'transpose';
   base_token: string | null;
   other_token: string | null;
   base_paragraph_index: number | null;
   char_ops: CharOp[];
+  class_id?: number | null;
+  word_class?: { code: string; display_name: string; color_hex: string; system_key?: 'insignificant' | null } | null;
 }
 
-export type EditAction = 
+export type EditAction =
+  | 'merge_to_transpose'
+  | 'split_transpose_to_replacements'
+
   | 'split_replace_to_insert_delete'
   | 'split_replace_to_delete_insert'
   | 'merge_to_replace'
@@ -27,9 +35,20 @@ export type EditAction =
   | 'split_re_re_to_ins_re_del'
   | 'split_re_re_to_del_re_ins';
 
+export function canTranspose(a: WordOp, b: WordOp): boolean {
+  return a.op_type === 'replace' && b.op_type === 'replace' && !!a.base_token && !!b.base_token
+    && a.base_token !== b.base_token
+    && a.base_token === b.other_token && b.base_token === a.other_token
+    && (a.base_index == null || b.base_index == null || b.base_index === a.base_index + 1)
+    && (a.other_index == null || b.other_index == null || b.other_index === a.other_index + 1);
+}
+
+let nextTemporaryId = -1;
+
 export function getAvailableActions(selectedOps: WordOp[]): EditAction[] {
   if (selectedOps.length === 1) {
     const op = selectedOps[0];
+    if (op.op_type === 'transpose') return ['split_transpose_to_replacements'];
     if (op.op_type === 'replace') {
       return ['split_replace_to_insert_delete', 'split_replace_to_delete_insert'];
     }
@@ -60,7 +79,7 @@ export function getAvailableActions(selectedOps: WordOp[]): EditAction[] {
     }
 
     if (type1 === 'replace' && type2 === 'replace') {
-        return ['split_re_re_to_ins_re_del', 'split_re_re_to_del_re_ins'];
+        return [...(canTranspose(op1, op2) ? ['merge_to_transpose' as EditAction] : []), 'split_re_re_to_ins_re_del', 'split_re_re_to_del_re_ins'];
     }
   }
   return [];
@@ -75,11 +94,36 @@ export function applyAction(
   // Sort indices to ensure we handle them in order
   const sortedIndices = [...selectedIndices].sort((a, b) => a - b);
   const startIdx = sortedIndices[0];
+  if (!sortedIndices.length || sortedIndices.some((index, i) => !Number.isInteger(index) || !allOps[index] || (i > 0 && index !== sortedIndices[i-1] + 1))
+      || !getAvailableActions(sortedIndices.map(index => allOps[index])).includes(action)) {
+    throw new Error('Эта операция недоступна для выбранных соседних элементов');
+  }
   
   // Helper to generate a temporary ID (negative to avoid collision with DB ids)
-  const generateId = () => -Math.floor(Math.random() * 1000000);
+  const generateId = () => nextTemporaryId--;
 
-  if (action === 'split_replace_to_insert_delete') {
+  if (action === 'merge_to_transpose') {
+      const parts = sortedIndices.map(index => allOps[index]);
+      const commonClass = (parts[0].class_id ?? null) === (parts[1].class_id ?? null) ? parts[0].class_id ?? null : null;
+      newOps.splice(startIdx, 2, {
+          id: generateId(), op_type: 'transpose',
+          base_token: parts.map(p => p.base_token).join(' '), other_token: parts.map(p => p.other_token).join(' '),
+          base_index: parts[0].base_index, other_index: parts[0].other_index,
+          base_paragraph_index: parts[0].base_paragraph_index,
+          char_ops: [], class_id: commonClass, word_class: commonClass ? parts[0].word_class : null,
+          transpose_parts: parts.map(part => ({ ...part, char_ops: part.char_ops.map(char => ({ ...char })) })),
+      });
+  } else if (action === 'split_transpose_to_replacements') {
+      const pair = allOps[startIdx];
+      const parts = pair.transpose_parts;
+      if (!parts || parts.length !== 2 || !canTranspose(parts[0], parts[1])) throw new Error('Некорректная перестановка');
+      const originalClass = (parts[0].class_id ?? null) === (parts[1].class_id ?? null) ? parts[0].class_id ?? null : null;
+      const override = (pair.class_id ?? null) !== originalClass;
+      newOps.splice(startIdx, 1, ...parts.map(part => ({ ...part, id: generateId(), transpose_parts: undefined,
+          char_ops: part.char_ops.map(char => ({ ...char, id: generateId() })),
+          ...(override ? { class_id: pair.class_id ?? null, word_class: pair.word_class ?? null } : {}),
+      })));
+  } else if (action === 'split_replace_to_insert_delete') {
       // replace -> insert, delete
       const op = allOps[startIdx];
       
@@ -297,16 +341,18 @@ export function applyAction(
 
 export function getActionLabel(action: EditAction): string {
     switch (action) {
-        case 'split_replace_to_insert_delete': return 'Split to Insert + Delete';
-        case 'split_replace_to_delete_insert': return 'Split to Delete + Insert';
-        case 'merge_to_replace': return 'Merge to Replace';
-        case 'swap_order': return 'Swap Order';
-        case 'swap_insert_replace': return 'Swap Replace';
-        case 'swap_replace_insert': return 'Swap Replace';
-        case 'swap_delete_replace': return 'Swap Replace';
-        case 'swap_replace_delete': return 'Swap Replace';
-        case 'split_re_re_to_ins_re_del': return 'Transform to Ins, Rep, Del';
-        case 'split_re_re_to_del_re_ins': return 'Transform to Del, Rep, Ins';
+        case 'merge_to_transpose': return 'Объединить в перестановку (Tr)';
+        case 'split_transpose_to_replacements': return 'Разделить перестановку на замены';
+        case 'split_replace_to_insert_delete': return 'Разделить на вставку и удаление';
+        case 'split_replace_to_delete_insert': return 'Разделить на удаление и вставку';
+        case 'merge_to_replace': return 'Объединить в замену';
+        case 'swap_order': return 'Поменять порядок';
+        case 'swap_insert_replace': return 'Перестроить замену';
+        case 'swap_replace_insert': return 'Перестроить замену';
+        case 'swap_delete_replace': return 'Перестроить замену';
+        case 'swap_replace_delete': return 'Перестроить замену';
+        case 'split_re_re_to_ins_re_del': return 'Преобразовать во вставку, замену и удаление';
+        case 'split_re_re_to_del_re_ins': return 'Преобразовать в удаление, замену и вставку';
         default: return action;
     }
 }

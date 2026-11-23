@@ -23,6 +23,9 @@ services:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/textologist_db
       DB_SCHEMA: ${DB_SCHEMA:-collations}
       SECRET_KEY: ${SECRET_KEY}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_USER1_PASSWORD: ${BOOTSTRAP_USER1_PASSWORD:-}
+      BOOTSTRAP_USER2_PASSWORD: ${BOOTSTRAP_USER2_PASSWORD:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     volumes:
       - uploads:/app/uploads

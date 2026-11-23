@@ -229,6 +229,13 @@ def compare_tokens_levenshtein_nested(
             else:
                 dp[i][j] = (cost_ins, 3) # Insert
 
+            # Restricted adjacent transposition (OSA): exact, distinct crossed tokens only.
+            if i >= 2 and j >= 2 and base_tokens[i-2] != base_t and base_tokens[i-2] == other_t and base_t == other_tokens[j-2]:
+                swap_cost = weights.transpose * similarity_factor
+                cost_tr = dp[i-2][j-2][0] + swap_cost
+                if cost_tr <= dp[i][j][0]:
+                    dp[i][j] = (cost_tr, 4)
+
     # print(dp)
 
     # Backtrack (Identical to standard Levenshtein)
@@ -240,7 +247,13 @@ def compare_tokens_levenshtein_nested(
         _report_alignment_progress(progress_callback, align_cur, align_total)
         _, op_type = dp[i][j]
         
-        if op_type == 1: # Match or Replace
+        if op_type == 4:
+            pair = base_tokens[i-2:i]
+            ops.append(WordOp(op_type=WordOpType.transpose, base_index=i-2, other_index=j-2,
+                              base_token=" ".join(pair), other_token=" ".join(reversed(pair)), transpose_tokens=pair))
+            i -= 2
+            j -= 2
+        elif op_type == 1: # Match or Replace
             base_t = base_tokens[i-1]
             other_t = other_tokens[j-1]
             if base_t == other_t:
@@ -336,6 +349,13 @@ def compare_tokens_levenshtein(
             else:
                 dp[i][j] = (cost_ins, 3) # Insert
 
+            # Restricted adjacent transposition (OSA): exact, distinct crossed tokens only.
+            if i >= 2 and j >= 2 and base_tokens[i-2] != base_t and base_tokens[i-2] == other_t and base_t == other_tokens[j-2]:
+                swap_cost = weights.transpose
+                cost_tr = dp[i-2][j-2][0] + swap_cost
+                if cost_tr <= dp[i][j][0]:
+                    dp[i][j] = (cost_tr, 4)
+
     # Backtrack
     ops = []
     i, j = n, m
@@ -345,7 +365,13 @@ def compare_tokens_levenshtein(
         _report_alignment_progress(progress_callback, align_cur, align_total)
         _, op_type = dp[i][j]
         
-        if op_type == 1: # Match or Replace
+        if op_type == 4:
+            pair = base_tokens[i-2:i]
+            ops.append(WordOp(op_type=WordOpType.transpose, base_index=i-2, other_index=j-2,
+                              base_token=" ".join(pair), other_token=" ".join(reversed(pair)), transpose_tokens=pair))
+            i -= 2
+            j -= 2
+        elif op_type == 1: # Match or Replace
             base_t = base_tokens[i-1]
             other_t = other_tokens[j-1]
             if base_t == other_t:
@@ -453,6 +479,13 @@ def compare_tokens_levenshtein_v2(
             else:
                 dp[i][j] = (cost_ins, 3)
 
+            # Restricted adjacent transposition (OSA): exact, distinct crossed tokens only.
+            if i >= 2 and j >= 2 and base_tokens[i-2] != base_t and base_tokens[i-2] == other_t and base_t == other_tokens[j-2]:
+                swap_cost = weights.transpose
+                cost_tr = dp[i-2][j-2][0] + swap_cost
+                if cost_tr <= dp[i][j][0]:
+                    dp[i][j] = (cost_tr, 4)
+
     ops: List[WordOp] = []
     i, j = n, m
 
@@ -461,7 +494,13 @@ def compare_tokens_levenshtein_v2(
         _report_alignment_progress(progress_callback, align_cur, align_total)
         _, op_type = dp[i][j]
 
-        if op_type == 1:
+        if op_type == 4:
+            pair = base_tokens[i-2:i]
+            ops.append(WordOp(op_type=WordOpType.transpose, base_index=i-2, other_index=j-2,
+                              base_token=" ".join(pair), other_token=" ".join(reversed(pair)), transpose_tokens=pair))
+            i -= 2
+            j -= 2
+        elif op_type == 1:
             base_t = base_tokens[i - 1]
             other_t = other_tokens[j - 1]
             if base_t == other_t:

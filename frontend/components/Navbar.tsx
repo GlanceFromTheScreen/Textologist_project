@@ -1,6 +1,6 @@
 "use client";
 
-import Link from 'next/navigation'; // Link from next/link is better usually, but let's check
+import api from '@/lib/api';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
@@ -9,12 +9,20 @@ export default function Navbar() {
   const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+
   // Simple auth check (token existence)
   useEffect(() => {
     // This runs on client mount. 
     // Ideally use a context, but localStorage check is fine for MVP.
     const token = localStorage.getItem('token');
     setIsLoggedIn(!!token);
+    setIsAdmin(false);
+    let cancelled = false;
+    if (token && pathname !== '/login' && pathname !== '/register') {
+      api.get('/auth/me').then(res => { if (!cancelled) setIsAdmin(res.data.role === 'admin'); }).catch(() => {});
+    }
+    return () => { cancelled = true; };
   }, [pathname]); // Re-check on route change
 
   const handleLogout = () => {
@@ -29,10 +37,11 @@ export default function Navbar() {
   }
 
   const navItems = [
-    { name: 'Dashboard', href: '/dashboard' },
-    { name: 'Texts', href: '/texts' },
-    { name: 'History', href: '/history' },
-    { name: 'Matrix', href: '/matrix' },
+    { name: 'Главная', href: '/dashboard' },
+    { name: 'Тексты', href: '/texts' },
+    { name: 'История', href: '/history' },
+    { name: 'Матрица', href: '/matrix' },
+    ...(isAdmin ? [{ name: 'Пользователи', href: '/users' }] : []),
   ];
 
   return (
@@ -66,7 +75,7 @@ export default function Navbar() {
               onClick={handleLogout}
               className="text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors"
             >
-              Sign out
+              Выйти
             </button>
           </div>
         </div>

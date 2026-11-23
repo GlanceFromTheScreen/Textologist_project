@@ -60,23 +60,34 @@ def delete_preset(
     db.commit()
     return {"ok": True}
 
-# Save as preset logic (needs to be here or in comparisons router? Spec says POST /comparisons/{id}/save-as-preset. 
-# It fits better in comparisons router logically, but returns a preset. 
-# I will put it in comparisons router to keep prefix consistent with spec)
+def owned_rule(db, user_id, preset_id, rule_id):
+    rule = db.query(models.PresetRule).join(models.Preset).filter(
+        models.Preset.owner_user_id == user_id,
+        models.PresetRule.preset_id == preset_id,
+        models.PresetRule.id == rule_id,
+    ).first()
+    if not rule:
+        raise HTTPException(404, "Preset rule not found")
+    return rule
 
-# Helper function for conflict resolution
-def resolve_conflict(rules_group):
-    # rules_group is list of {class_id, class_name}
-    # 1. Filter out nulls if possible
-    non_nulls = [r for r in rules_group if r['class_id'] is not None]
-    if not non_nulls:
-        return None # All null
-    
-    if len(non_nulls) == 1:
-        return non_nulls[0]['class_id']
-    
-    # 2. Sort by class display_name
-    # We need to join with ClassCatalog to get display_name.
-    # Assuming the input has class_name populated.
-    non_nulls.sort(key=lambda x: x['class_name'] or "")
-    return non_nulls[0]['class_id']
+
+@router.delete("/{preset_id}/rules/{rule_id}", response_model=schemas.PresetRuleRead)
+def delete_rule(preset_id: int, rule_id: int,
+                current_user: models.User = Depends(dependencies.get_current_active_user),
+                db: Session = Depends(dependencies.get_db)):
+    rule = owned_rule(db, current_user.id, preset_id, rule_id)
+    rule.is_deleted = True
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/{preset_id}/rules/{rule_id}/restore", response_model=schemas.PresetRuleRead)
+def restore_rule(preset_id: int, rule_id: int,
+                 current_user: models.User = Depends(dependencies.get_current_active_user),
+                 db: Session = Depends(dependencies.get_db)):
+    rule = owned_rule(db, current_user.id, preset_id, rule_id)
+    rule.is_deleted = False
+    db.commit()
+    db.refresh(rule)
+    return rule

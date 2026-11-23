@@ -1,15 +1,21 @@
 import json
 import queue
 import threading
+import uuid
 from typing import Callable, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
+from pydantic import TypeAdapter, ValidationError
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 import algo
 from .. import schemas, models, dependencies, database
+from ..reconstructed_texts import restore_comparison_texts
+from ..class_access import validate_class_ids
+from ..preset_matching import PresetMatcher, collect_preset_rules
+from .classes import read_classes
 
 router = APIRouter(
     prefix="/comparisons",
@@ -20,11 +26,183 @@ ComparisonProgress = Optional[Callable[[str, str, int, int], None]]
 # (phase, algorithm_label, current, total) — phase: tokenize | alignment | persist
 
 _ALGORITHM_LABELS = {
-    "levenshtein": "Levenshtein",
-    "levenshtein_nested": "Levenshtein Nested",
-    "levenshtein_v2": "Levenshtein 2.0",
-    "myers": "Myers (Diff)",
+    "levenshtein": "Левенштейн",
+    "levenshtein_nested": "Левенштейн (вложенный)",
+    "levenshtein_v2": "Левенштейн 2.0",
+    "myers": "Майерс",
 }
+
+MAX_IMPORT_BYTES = 10 * 1024 * 1024
+MAX_IMPORT_OPERATIONS = 50000
+
+
+def word_records(operations):
+    """Include preserved replacement snapshots when validating/remapping class IDs."""
+    for word in operations:
+        yield word
+        yield from word.transpose_parts or []
+
+
+
+@router.post("/import", response_model=schemas.ComparisonDetail, status_code=201)
+def import_comparison(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(dependencies.get_current_active_user),
+    db: Session = Depends(dependencies.get_db),
+):
+    """Import the operation array produced by Export JSON, without recomputing it."""
+    content = file.file.read(MAX_IMPORT_BYTES + 1)
+    if len(content) > MAX_IMPORT_BYTES:
+        raise HTTPException(413, "JSON file must be no larger than 10 MB")
+    try:
+        payload = json.loads(content.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise HTTPException(400, "The file must contain valid UTF-8 JSON")
+    separators = [" "]
+    if isinstance(payload, dict) and payload.get("format") == "textologist-comparison-v2":
+        try:
+            separators = schemas.TokenizationSettings(separators=payload.get("separators", [" "])).separators
+        except ValidationError:
+            raise HTTPException(422, "Укажите хотя бы один разделитель; каждый разделитель — один символ")
+        payload = payload.get("word_ops")
+    if not isinstance(payload, list) or not payload:
+        raise HTTPException(422, "Expected a non-empty array of comparison operations (Export JSON format)")
+    if len(payload) > MAX_IMPORT_OPERATIONS:
+        raise HTTPException(422, "A comparison can contain at most 50,000 operations")
+    try:
+        word_ops = TypeAdapter(List[schemas.ImportedWordOp]).validate_python(payload)
+    except ValidationError as exc:
+        error = exc.errors(include_url=False, include_input=False)[0]
+        location = ".".join(str(part) for part in error["loc"])
+        raise HTTPException(422, f"Invalid comparison operation at {location}: {error['msg']}")
+
+    word_descriptions = {}
+    records = list(word_records(word_ops))
+    for operation in records:
+        if operation.word_class is not None:
+            previous = word_descriptions.get(operation.class_id)
+            if previous is not None and previous != operation.word_class:
+                raise HTTPException(422, "Conflicting word-class descriptions for the same class_id")
+            word_descriptions[operation.class_id] = operation.word_class
+
+    filename = (file.filename or "comparison.json").replace("\\", "/").rsplit("/", 1)[-1]
+    title = filename.rsplit(".", 1)[0].strip()[:200] or "Импортированное сравнение"
+    comp = models.Comparison(owner_user_id=current_user.id, title=title, saved=True, separators=separators)
+    try:
+        db.add(comp)
+        db.flush()
+        restore_comparison_texts(db, comp, word_ops)
+        # IDs in a file belong to its source database. Never attach them to an
+        # unrelated local class, even if that class happens to have the same ID.
+        class_ids = sorted({c.class_id for w in records for c in w.char_ops if c.class_id is not None})
+        class_map = {}
+        import_key = uuid.uuid4().hex
+        for source_id in class_ids:
+            imported_class = models.ClassCatalog(
+                owner_user_id=current_user.id,
+                code=f"import:{import_key}:{source_id}",
+                display_name=f"Импортированный класс №{source_id}",
+                color_hex="#6366f1",
+            )
+            db.add(imported_class)
+            db.flush()
+            class_map[source_id] = imported_class.id
+
+        word_class_map = {}
+        for source_id in sorted({w.class_id for w in records if w.class_id is not None}):
+            description = word_descriptions.get(source_id)
+            if description and description.system_key == "insignificant":
+                builtin = db.query(models.ClassCatalog).filter_by(system_key="insignificant", kind="word", owner_user_id=None).one()
+                word_class_map[source_id] = builtin.id
+                continue
+            imported_class = models.ClassCatalog(
+                owner_user_id=current_user.id,
+                code=f"import-word:{import_key}:{source_id}",
+                display_name=description.display_name if description else f"Импортированный словесный класс №{source_id}",
+                color_hex=description.color_hex if description else "#6366f1",
+                kind="word",
+            )
+            db.add(imported_class)
+            db.flush()
+            word_class_map[source_id] = imported_class.id
+
+        for index, operation in enumerate(word_ops):
+            word = models.ComparisonWordOp(
+                comparison_id=comp.id,
+                order_index=index,
+                op_type=models.WordOpType(operation.op_type.value),
+                base_index=operation.base_index,
+                other_index=operation.other_index,
+                base_token=operation.base_token,
+                other_token=operation.other_token,
+                base_paragraph_index=operation.base_paragraph_index,
+                class_id=word_class_map.get(operation.class_id),
+                transpose_parts=[{
+                    **part.model_dump(mode="json"),
+                    "class_id": word_class_map.get(part.class_id),
+                    "char_ops": [{**char.model_dump(mode="json"), "class_id": class_map.get(char.class_id)} for char in part.char_ops],
+                } for part in operation.transpose_parts] if operation.transpose_parts else None,
+            )
+            db.add(word)
+            db.flush()
+            for char in operation.char_ops:
+                db.add(models.ComparisonCharOp(
+                    comparison_id=comp.id,
+                    word_op_id=word.id,
+                    op_type=models.OpType(char.op_type.value),
+                    from_str=char.from_str,
+                    to_str=char.to_str,
+                    class_id=class_map.get(char.class_id),
+                    source=models.CharOpSource.manual if char.class_id is not None else models.CharOpSource.classifier,
+                ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return read_comparison(comp.id, current_user, db)
+
+
+@router.patch("/{comp_id}/font", response_model=schemas.ComparisonFontUpdate)
+def update_comparison_font(
+    comp_id: int,
+    request: schemas.ComparisonFontUpdate,
+    current_user: models.User = Depends(dependencies.get_current_active_user),
+    db: Session = Depends(dependencies.get_db),
+):
+    comp = db.query(models.Comparison).filter(
+        models.Comparison.id == comp_id,
+        models.Comparison.owner_user_id == current_user.id,
+    ).first()
+    if comp is None:
+        raise HTTPException(404, "Comparison not found")
+    if request.selected_font_id is not None:
+        font = db.query(models.Font).filter(
+            models.Font.id == request.selected_font_id,
+            models.Font.owner_user_id == current_user.id,
+        ).first()
+        if font is None:
+            raise HTTPException(404, "Font not found")
+    comp.selected_font_id = request.selected_font_id
+    db.commit()
+    return {"selected_font_id": comp.selected_font_id}
+
+
+@router.patch("/{comp_id}", response_model=schemas.ComparisonRead)
+def rename_comparison(
+    comp_id: int,
+    request: schemas.ComparisonRenameRequest,
+    current_user: models.User = Depends(dependencies.get_current_active_user),
+    db: Session = Depends(dependencies.get_db),
+):
+    comp = db.query(models.Comparison).filter(
+        models.Comparison.id == comp_id,
+        models.Comparison.owner_user_id == current_user.id,
+    ).first()
+    if comp is None:
+        raise HTTPException(404, "Comparison not found")
+    comp.title = request.title
+    db.commit()
+    return read_comparison(comp.id, current_user, db)
 
 
 def _report_list_progress(
@@ -55,10 +233,10 @@ def execute_comparison(
     algorithm_name = comp_data.algorithm.value if comp_data.algorithm else "levenshtein"
     algo_label = _ALGORITHM_LABELS.get(algorithm_name, algorithm_name)
 
-    base_tok_res = algo.tokenize_paragraphs(base_text.extracted_paragraphs_json)
+    base_tok_res = algo.tokenize_paragraphs(base_text.extracted_paragraphs_json, comp_data.separators)
     if progress:
         progress("tokenize", algo_label, 1, 2)
-    other_tok_res = algo.tokenize_paragraphs(other_text.extracted_paragraphs_json)
+    other_tok_res = algo.tokenize_paragraphs(other_text.extracted_paragraphs_json, comp_data.separators)
     if progress:
         progress("tokenize", algo_label, 2, 2)
 
@@ -66,6 +244,7 @@ def execute_comparison(
         replace=comp_data.weights.replace,
         delete=comp_data.weights.delete,
         insert=comp_data.weights.insert,
+        transpose=comp_data.weights.transpose,
         char_replace=comp_data.weights.char_replace,
         char_delete=comp_data.weights.char_delete,
         char_insert=comp_data.weights.char_insert,
@@ -83,25 +262,33 @@ def execute_comparison(
         progress_callback=align_progress if progress else None,
     )
 
-    preset_rules_map = {}
+    preset_rules = []
     if comp_data.preset_id:
         preset = db.query(models.Preset).filter(
             models.Preset.id == comp_data.preset_id,
             models.Preset.owner_user_id == current_user.id,
         ).first()
-        if preset:
-            rules = db.query(models.PresetRule).filter(models.PresetRule.preset_id == preset.id).all()
-            for rule in rules:
-                key = (rule.op_type.value, rule.from_str, rule.to_str)
-                preset_rules_map[key] = rule.class_id
+        if not preset:
+            raise HTTPException(404, "Preset not found")
+        preset_rules = preset.rules
+    accessible_classes = {c.id: c for c in read_classes(current_user, db)}
+    matcher = PresetMatcher(preset_rules, accessible_classes)
+
+    def classified_char_ops(old, new):
+        for character in algo.char_diff(old, new):
+            class_id = matcher.character(character.op_type.value, character.from_str, character.to_str, old, new)
+            yield dict(op_type=character.op_type.value, from_str=character.from_str, to_str=character.to_str,
+                       class_id=class_id)
 
     db_comp = models.Comparison(
         owner_user_id=current_user.id,
         base_text_id=base_text.id,
         other_text_id=other_text.id,
+        separators=comp_data.separators,
         weight_replace=weights.replace,
         weight_delete=weights.delete,
         weight_insert=weights.insert,
+        weight_transpose=weights.transpose,
         algorithm=models.ComparisonAlgorithm(algorithm_name),
         selected_font_id=comp_data.font_id,
         selected_preset_id=comp_data.preset_id,
@@ -119,7 +306,18 @@ def execute_comparison(
             if w_op.base_index < len(base_tok_res.token_paragraph_index):
                 base_para_idx = base_tok_res.token_paragraph_index[w_op.base_index]
 
+        parts = None
+        if w_op.op_type == algo.WordOpType.transpose:
+            a, b = w_op.transpose_tokens
+            parts = [dict(op_type="replace", base_index=w_op.base_index + offset,
+                          other_index=w_op.other_index + offset,
+                          base_token=old, other_token=new,
+                          base_paragraph_index=base_tok_res.token_paragraph_index[w_op.base_index + offset],
+                          char_ops=list(classified_char_ops(old, new)), class_id=None)
+                     for offset, (old, new) in enumerate([(a, b), (b, a)])]
         db_w_op = models.ComparisonWordOp(
+            transpose_parts=parts,
+            class_id=matcher.word(w_op.op_type.value, w_op.base_token, w_op.other_token),
             comparison_id=db_comp.id,
             op_type=models.WordOpType(w_op.op_type.value),
             base_index=w_op.base_index,
@@ -133,27 +331,12 @@ def execute_comparison(
         db.flush()
 
         if w_op.op_type == algo.WordOpType.replace:
-            c_ops = algo.char_diff(w_op.base_token, w_op.other_token)
-            for c_op in c_ops:
-                class_code = algo.classify_graphic(c_op, w_op.base_token, w_op.other_token)
-                class_id = None
-                source = models.CharOpSource.classifier
-
-                rule_key = (c_op.op_type.value, c_op.from_str, c_op.to_str)
-                if rule_key in preset_rules_map:
-                    class_id = preset_rules_map[rule_key]
-                    source = models.CharOpSource.preset
-
-                db_c_op = models.ComparisonCharOp(
-                    comparison_id=db_comp.id,
-                    word_op_id=db_w_op.id,
-                    op_type=models.OpType(c_op.op_type.value),
-                    from_str=c_op.from_str,
-                    to_str=c_op.to_str,
-                    class_id=class_id,
-                    source=source,
-                )
-                db.add(db_c_op)
+            for character in classified_char_ops(w_op.base_token, w_op.other_token):
+                db.add(models.ComparisonCharOp(
+                    comparison_id=db_comp.id, word_op_id=db_w_op.id,
+                    source=models.CharOpSource.preset if character['class_id'] is not None else models.CharOpSource.classifier,
+                    **character,
+                ))
 
     db.commit()
     db.refresh(db_comp)
@@ -283,9 +466,15 @@ def read_comparison(
     
     # Sort word_ops by order_index
     comp.word_ops.sort(key=lambda x: x.order_index)
+    for word in comp.word_ops:
+        word.char_ops.sort(key=lambda x: x.id)
     
     # Populate title fields
     comp_detail = schemas.ComparisonDetail.from_orm(comp)
+    effective_classes = {cls.id: cls for cls in read_classes(current_user, db) if cls.kind == schemas.ClassKind.word}
+    for word in word_records(comp_detail.word_ops):
+        cls = effective_classes.get(word.class_id)
+        word.word_class = schemas.WordClassDescription.model_validate(cls) if cls else None
     if comp.base_text:
         comp_detail.base_text_title = comp.base_text.title
     if comp.other_text:
@@ -305,6 +494,9 @@ def save_comparison(
         raise HTTPException(status_code=404, detail="Comparison not found")
         
     if save_req.word_ops is not None:
+        validate_class_ids(db, current_user.id, (w.class_id for w in word_records(save_req.word_ops)), "word")
+        validate_class_ids(db, current_user.id, (c.class_id for w in word_records(save_req.word_ops) for c in w.char_ops), "char")
+        comp.dirty_for_preset = True
         db.query(models.ComparisonWordOp).filter(models.ComparisonWordOp.comparison_id == comp_id).delete(synchronize_session=False)
         db.flush()
         
@@ -317,7 +509,9 @@ def save_comparison(
                 base_token=w_op_in.base_token,
                 other_token=w_op_in.other_token,
                 base_paragraph_index=w_op_in.base_paragraph_index,
-                order_index=idx
+                order_index=idx,
+                class_id=w_op_in.class_id,
+                transpose_parts=[p.model_dump(mode="json") for p in w_op_in.transpose_parts] if w_op_in.transpose_parts else None,
             )
             db.add(db_w_op)
             db.flush()
@@ -366,6 +560,57 @@ def delete_comparison(
     db.commit()
     return {"ok": True}
 
+@router.patch("/{comp_id}/word-classes", response_model=List[schemas.WordOpRead])
+def update_word_classes(
+    comp_id: int,
+    update_data: schemas.WordClassBatchUpdate,
+    current_user: models.User = Depends(dependencies.get_current_active_user),
+    db: Session = Depends(dependencies.get_db),
+):
+    comp = db.query(models.Comparison).filter_by(id=comp_id, owner_user_id=current_user.id).first()
+    if comp is None:
+        raise HTTPException(404, "Comparison not found")
+    ids = set(update_data.word_op_ids)
+    words = db.query(models.ComparisonWordOp).filter(
+        models.ComparisonWordOp.comparison_id == comp_id,
+        models.ComparisonWordOp.id.in_(ids),
+    ).all()
+    # Validate the entire batch before changing anything: no partial assignments.
+    if len(words) != len(ids):
+        raise HTTPException(404, "Word operation not found in this comparison")
+    if any(word.op_type == models.WordOpType.equal for word in words):
+        raise HTTPException(422, "Unchanged words cannot have a word-change class")
+    validate_class_ids(db, current_user.id, [update_data.class_id], "word")
+    for word in words:
+        word.class_id = update_data.class_id
+    db.commit()
+    detail = read_comparison(comp_id, current_user, db)
+    return [word for word in detail.word_ops if word.id in ids]
+
+
+@router.patch("/word-ops/{word_op_id}", response_model=schemas.WordOpRead)
+def update_word_op(
+    word_op_id: int,
+    update_data: schemas.WordClassUpdate,
+    current_user: models.User = Depends(dependencies.get_current_active_user),
+    db: Session = Depends(dependencies.get_db),
+):
+    word = db.query(models.ComparisonWordOp).join(models.Comparison).filter(
+        models.ComparisonWordOp.id == word_op_id,
+        models.Comparison.owner_user_id == current_user.id,
+    ).first()
+    if word is None:
+        raise HTTPException(404, "Word operation not found")
+    if word.op_type == models.WordOpType.equal:
+        raise HTTPException(422, "Unchanged words cannot have a word-change class")
+    validate_class_ids(db, current_user.id, [update_data.class_id], "word")
+    word.class_id = update_data.class_id
+    db.commit()
+    # Resolve display overrides just as in comparison reads and JSON exports.
+    detail = read_comparison(word.comparison_id, current_user, db)
+    return next(op for op in detail.word_ops if op.id == word.id)
+
+
 @router.patch("/char-ops/{char_op_id}", response_model=schemas.CharOpRead)
 def update_char_op(
     char_op_id: int,
@@ -381,6 +626,7 @@ def update_char_op(
     if not char_op:
         raise HTTPException(status_code=404, detail="CharOp not found")
     
+    validate_class_ids(db, current_user.id, [update_data.class_id], "char")
     char_op.class_id = update_data.class_id
     char_op.source = models.CharOpSource.manual
     char_op.comparison.dirty_for_preset = True
@@ -435,6 +681,7 @@ def update_char_op_group(
     if not comp:
         raise HTTPException(status_code=404, detail="Comparison not found")
         
+    validate_class_ids(db, current_user.id, [update_data.class_id], "char")
     db.query(models.ComparisonCharOp).filter(
         models.ComparisonCharOp.comparison_id == comp_id,
         models.ComparisonCharOp.op_type == update_data.op_type,
@@ -461,15 +708,9 @@ def save_as_preset(
     if not comp:
         raise HTTPException(status_code=404, detail="Comparison not found")
         
-    ops = db.query(models.ComparisonCharOp).filter(models.ComparisonCharOp.comparison_id == comp_id).all()
-    
-    groups = {}
-    for op in ops:
-        key = (op.op_type, op.from_str, op.to_str)
-        if key not in groups:
-            groups[key] = []
-        groups[key].append(op)
-        
+    classes = {c.id: c for c in read_classes(current_user, db)}
+    rules = collect_preset_rules(comp.word_ops, classes)
+
     new_preset = models.Preset(
         owner_user_id=current_user.id,
         name=data.name,
@@ -480,33 +721,9 @@ def save_as_preset(
     db.add(new_preset)
     db.flush()
     
-    for key, group_ops in groups.items():
-        op_type, from_str, to_str = key
-        
-        candidates = []
-        for op in group_ops:
-             if op.class_id:
-                 c_name = op.assigned_class.display_name if op.assigned_class else ""
-                 candidates.append({'class_id': op.class_id, 'class_name': c_name})
-             else:
-                 candidates.append({'class_id': None, 'class_name': ""})
-        
-        non_nulls = [c for c in candidates if c['class_id'] is not None]
-        final_class_id = None
-        
-        if non_nulls:
-            non_nulls.sort(key=lambda x: x['class_name'])
-            final_class_id = non_nulls[0]['class_id']
-        
-        rule = models.PresetRule(
-            preset_id=new_preset.id,
-            op_type=op_type,
-            from_str=from_str,
-            to_str=to_str,
-            class_id=final_class_id
-        )
-        db.add(rule)
-        
+    for rule in rules:
+        db.add(models.PresetRule(preset_id=new_preset.id, **rule))
+
     comp.dirty_for_preset = False
     db.commit()
     db.refresh(new_preset)

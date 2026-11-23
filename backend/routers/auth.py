@@ -17,22 +17,6 @@ def register(user: schemas.UserCreate, db: Session = Depends(dependencies.get_db
         detail="Регистрация новых пользователей временно отключена"
     )
     
-    db_user = db.query(models.User).filter(models.User.username == user.username).first()
-    if db_user:
-        raise HTTPException(status_code=400, detail="Username already registered")
-    
-    hashed_password = utils.get_password_hash(user.password)
-    # Default to textologist if not specified, but schema allows it
-    new_user = models.User(
-        username=user.username,
-        password_hash=hashed_password,
-        role=user.role or models.UserRole.textologist
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user
-
 @router.post("/login", response_model=schemas.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(dependencies.get_db)):
     # OAuth2PasswordRequestForm has username and password fields
@@ -52,7 +36,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     
     access_token_expires = timedelta(minutes=utils.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = utils.create_access_token(
-        data={"sub": user.username, "role": user.role.value}, expires_delta=access_token_expires
+        data={"sub": user.username, "uid": user.id, "ver": user.auth_version, "role": user.role.value}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 

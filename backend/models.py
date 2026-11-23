@@ -7,7 +7,7 @@ from .database import Base
 # Enums
 class UserRole(enum.Enum):
     admin = "admin"
-    textologist = "textologist"
+    user = "user"
 
 class SourceType(enum.Enum):
     txt = "txt"
@@ -28,6 +28,7 @@ class WordOpType(enum.Enum):
     delete = "delete"
     insert = "insert"
     replace = "replace"
+    transpose = "transpose"
 
 class ComparisonAlgorithm(enum.Enum):
     levenshtein = "levenshtein"
@@ -48,7 +49,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(Enum(UserRole), default=UserRole.textologist)
+    role = Column(Enum(UserRole), nullable=False, default=UserRole.user, server_default="user")
+    auth_version = Column(Integer, nullable=False, default=0, server_default="0")
+    bootstrap_key = Column(String(120), nullable=True, unique=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     texts = relationship("TextModel", back_populates="owner")
@@ -92,11 +95,14 @@ class ClassCatalog(Base):
     code = Column(String, nullable=False) # Identifier
     display_name = Column(String, nullable=False)
     color_hex = Column(String, nullable=False)
+    kind = Column(String(10), nullable=False, default="char", server_default="char")
+    system_key = Column(String(40), nullable=True, unique=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     overrides = relationship("ClassOverride", back_populates="base_class")
     preset_rules = relationship("PresetRule", back_populates="assigned_class")
     char_ops = relationship("ComparisonCharOp", back_populates="assigned_class")
+    word_ops = relationship("ComparisonWordOp", back_populates="word_class")
 
 class ClassOverride(Base):
     __tablename__ = "class_overrides"
@@ -129,7 +135,11 @@ class PresetRule(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     preset_id = Column(Integer, ForeignKey("presets.id"), nullable=False)
-    op_type = Column(Enum(OpType), nullable=False)
+    kind = Column(String(10), nullable=False, default="char", server_default="char")
+    op_type = Column(String(16), nullable=False)
+    base_word = Column(Text, nullable=True)
+    other_word = Column(Text, nullable=True)
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="false")
     from_str = Column(Text, nullable=False, default="")
     to_str = Column(Text, nullable=False, default="")
     class_id = Column(Integer, ForeignKey("class_catalog.id"), nullable=True)
@@ -143,13 +153,17 @@ class Comparison(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    base_text_id = Column(Integer, ForeignKey("texts.id"), nullable=False)
-    other_text_id = Column(Integer, ForeignKey("texts.id"), nullable=False)
+    title = Column(String(200), nullable=True)
+    # JSON exports contain operations, but no source documents.
+    base_text_id = Column(Integer, ForeignKey("texts.id"), nullable=True)
+    other_text_id = Column(Integer, ForeignKey("texts.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
+    separators = Column(JSON, nullable=False, default=lambda: [" "], server_default='[" "]')
     weight_replace = Column(Float, default=1.0)
     weight_delete = Column(Float, default=1.0)
     weight_insert = Column(Float, default=1.0)
+    weight_transpose = Column(Float, nullable=False, default=1.0, server_default="1")
     
     algorithm = Column(Enum(ComparisonAlgorithm), default=ComparisonAlgorithm.levenshtein)
     selected_font_id = Column(Integer, ForeignKey("fonts.id"), nullable=True)
@@ -180,10 +194,13 @@ class ComparisonWordOp(Base):
     other_token = Column(Text, nullable=True)
     base_paragraph_index = Column(Integer, nullable=True) # 0-based storage, 1-based display
     order_index = Column(Integer, nullable=False, server_default='0')
+    transpose_parts = Column(JSON, nullable=True)
+    class_id = Column(Integer, ForeignKey("class_catalog.id"), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     comparison = relationship("Comparison", back_populates="word_ops")
+    word_class = relationship("ClassCatalog", back_populates="word_ops")
     # Configure cascade delete here as well for SQLAlchemy level
     char_ops = relationship("ComparisonCharOp", back_populates="word_op", cascade="all, delete-orphan", passive_deletes=True)
 

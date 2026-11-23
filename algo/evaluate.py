@@ -13,9 +13,9 @@ def add_base_indices(ops: List[Dict[str, Any]]):
     base_idx = 0
     for i, op in enumerate(ops):
         op['_list_idx'] = i
-        if op['op_type'] in ('equal', 'delete', 'replace'):
+        if op['op_type'] in ('equal', 'delete', 'replace', 'transpose'):
             op['base_idx'] = base_idx
-            base_idx += 1
+            base_idx += 2 if op["op_type"] == "transpose" else 1
         elif op['op_type'] == 'insert':
             op['base_idx'] = base_idx - 0.5  # virtual position between tokens
 
@@ -31,14 +31,14 @@ def evaluate_comparisons(comp1_ops: List[Dict[str, Any]], comp2_ops: List[Dict[s
     add_base_indices(comp1)
     add_base_indices(comp2)
     
-    comp2_by_base_idx = {op['base_idx']: op for op in comp2 if op['op_type'] in ('equal', 'delete', 'replace')}
-    comp1_by_base_idx = {op['base_idx']: op for op in comp1 if op['op_type'] in ('equal', 'delete', 'replace')}
+    comp2_by_base_idx = {op['base_idx']: op for op in comp2 if op['op_type'] in ('equal', 'delete', 'replace', 'transpose')}
+    comp1_by_base_idx = {op['base_idx']: op for op in comp1 if op['op_type'] in ('equal', 'delete', 'replace', 'transpose')}
     
     matched_elements_recall = []
     
     # 1. Iterate over comp1 to calculate Recall elements
     for op1 in comp1:
-        if op1['op_type'] in ('equal', 'delete', 'replace'):
+        if op1['op_type'] in ('equal', 'delete', 'replace', 'transpose'):
             base_idx = op1['base_idx']
             op2 = comp2_by_base_idx.get(base_idx)
             matched_elements_recall.append({
@@ -77,7 +77,7 @@ def evaluate_comparisons(comp1_ops: List[Dict[str, Any]], comp2_ops: List[Dict[s
     
     # 2. Iterate over comp2 to calculate Precision elements
     for op2 in comp2:
-        if op2['op_type'] in ('equal', 'delete', 'replace'):
+        if op2['op_type'] in ('equal', 'delete', 'replace', 'transpose'):
             base_idx = op2['base_idx']
             op1 = comp1_by_base_idx.get(base_idx)
             matched_elements_prec.append({

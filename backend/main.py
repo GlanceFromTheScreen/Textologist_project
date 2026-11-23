@@ -2,9 +2,11 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .database import engine, Base
+from .database import engine, Base, SessionLocal
+from .bootstrap_users import ensure_default_users
 
 # Import models to ensure they are registered
 from . import models
@@ -14,7 +16,14 @@ from . import models
 # we can uncomment this to auto-create tables if they don't exist.
 # Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Textologist", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    with SessionLocal() as db:
+        ensure_default_users(db)
+    yield
+
+
+app = FastAPI(title="Textologist", version="0.1.0", lifespan=lifespan)
 
 # CORS setup — comma-separated list via CORS_ORIGINS env (see .env.example)
 _default_origins = "http://localhost:3000,http://localhost:8000"
@@ -32,7 +41,7 @@ app.add_middleware(
 def read_root():
     return {"message": "Welcome to Textologist API"}
 
-from .routers import auth, texts, fonts, comparisons, presets, stats, matrix, classes
+from .routers import auth, texts, fonts, comparisons, presets, stats, matrix, classes, users
 app.include_router(auth.router)
 app.include_router(texts.router)
 app.include_router(fonts.router)
@@ -41,3 +50,5 @@ app.include_router(presets.router)
 app.include_router(stats.router)
 app.include_router(matrix.router)
 app.include_router(classes.router)
+
+app.include_router(users.router)

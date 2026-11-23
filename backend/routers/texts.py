@@ -89,6 +89,25 @@ def read_text(
         raise HTTPException(status_code=404, detail="Text not found")
     return text
 
+@router.patch("/{text_id}", response_model=schemas.TextSummary)
+def rename_text(
+    text_id: int,
+    request: schemas.TextRenameRequest,
+    current_user: models.User = Depends(dependencies.get_current_active_user),
+    db: Session = Depends(dependencies.get_db),
+):
+    text = db.query(models.TextModel).filter(
+        models.TextModel.id == text_id,
+        models.TextModel.owner_user_id == current_user.id,
+    ).first()
+    if text is None:
+        raise HTTPException(404, "Text not found")
+    text.title = request.title
+    db.commit()
+    db.refresh(text)
+    return text
+
+
 @router.delete("/{text_id}")
 def delete_text(
     text_id: int,

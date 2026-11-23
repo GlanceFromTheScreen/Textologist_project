@@ -7,6 +7,7 @@ class WordOpType(str, Enum):
     delete = "delete"
     insert = "insert"
     replace = "replace"
+    transpose = "transpose"
 
 class CharOpType(str, Enum):
     insert = "insert"
@@ -22,6 +23,7 @@ class Weights:
     char_replace: float = 1.0
     char_delete: float = 1.0
     char_insert: float = 1.0
+    transpose: float = 1.0
 
 @dataclass
 class TokenizationResult:
@@ -35,6 +37,7 @@ class WordOp:
     other_index: Optional[int] = None
     base_token: Optional[str] = None
     other_token: Optional[str] = None
+    transpose_tokens: Optional[List[str]] = None
 
 @dataclass
 class CharOp:

@@ -7,7 +7,9 @@ from jose import JWTError, jwt
 # Changed from bcrypt to pbkdf2_sha256 to avoid issues with length/libraries
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("Set SECRET_KEY in the backend environment before starting the application")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 300 # Long for MVP convenience
 

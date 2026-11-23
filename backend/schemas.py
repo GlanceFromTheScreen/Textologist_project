@@ -1,18 +1,59 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List, Any
+from pydantic import BaseModel, Field, StringConstraints, model_validator
+from typing import Annotated, Optional, List, Any, Literal
 from datetime import datetime
 from enum import Enum
+import uuid
+
+class ClassKind(str, Enum):
+    word = "word"
+    char = "char"
+
+ClassName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+ClassCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+ClassColor = Annotated[str, StringConstraints(pattern=r"^#[0-9a-fA-F]{6}$")]
+
+class WordClassDescription(BaseModel):
+    system_key: Optional[Literal["insignificant"]] = None
+    code: ClassCode
+    display_name: ClassName
+    color_hex: ClassColor
+
+    class Config:
+        from_attributes = True
 
 class UserRole(str, Enum):
     admin = "admin"
-    textologist = "textologist"
+    user = "user"
 
 class UserBase(BaseModel):
     username: str
 
 class UserCreate(UserBase):
     password: str
-    role: Optional[UserRole] = UserRole.textologist
+    role: Optional[UserRole] = UserRole.user
+
+AccountLogin = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100, pattern=r"^[^\s]+$")]
+AccountPassword = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+class AdminUserCreate(BaseModel):
+    username: AccountLogin
+    password: AccountPassword
+
+    class Config:
+        extra = "forbid"
+
+class AdminUserUpdate(BaseModel):
+    username: Optional[AccountLogin] = None
+    password: Optional[AccountPassword] = None
+
+    @model_validator(mode="after")
+    def require_changes(self):
+        if not self.model_fields_set or any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Укажите новый логин или пароль")
+        return self
+
+    class Config:
+        extra = "forbid"
 
 class UserLogin(UserBase):
     password: str
@@ -43,6 +84,9 @@ class TextBase(BaseModel):
 
 class TextCreate(TextBase):
     pass
+
+class TextRenameRequest(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 class Text(TextBase):
     id: int
@@ -96,6 +140,7 @@ class WordOpType(str, Enum):
     delete = "delete"
     insert = "insert"
     replace = "replace"
+    transpose = "transpose"
 
 class ComparisonAlgorithm(str, Enum):
     levenshtein = "levenshtein"
@@ -104,6 +149,7 @@ class ComparisonAlgorithm(str, Enum):
     myers = "myers"
 
 class Weights(BaseModel):
+    transpose: float = Field(default=1.0, ge=0, allow_inf_nan=False)
     replace: float = 1.0
     delete: float = 1.0
     insert: float = 1.0
@@ -111,7 +157,18 @@ class Weights(BaseModel):
     char_delete: float = 1.0
     char_insert: float = 1.0
 
-class ComparisonCreate(BaseModel):
+Separator = Annotated[str, StringConstraints(min_length=1, max_length=1)]
+Separators = Annotated[List[Separator], Field(min_length=1)]
+
+class TokenizationSettings(BaseModel):
+    separators: Separators = Field(default_factory=lambda: [" "])
+
+    @model_validator(mode="after")
+    def unique_separators(self):
+        self.separators = list(dict.fromkeys(self.separators))
+        return self
+
+class ComparisonCreate(TokenizationSettings):
     base_text_id: int
     other_text_id: int
     weights: Weights
@@ -123,9 +180,28 @@ class CharOpInput(BaseModel):
     op_type: OpType
     from_str: str
     to_str: str
-    class_id: Optional[int] = None
+    class_id: Optional[int] = Field(default=None, ge=1, strict=True)
+
+class TranspositionPart(BaseModel):
+    op_type: Literal["replace"] = "replace"
+    base_index: Optional[int] = Field(default=None, ge=0, strict=True)
+    other_index: Optional[int] = Field(default=None, ge=0, strict=True)
+    base_token: Annotated[str, StringConstraints(min_length=1)]
+    other_token: Annotated[str, StringConstraints(min_length=1)]
+    base_paragraph_index: Optional[int] = Field(default=None, ge=0, strict=True)
+    char_ops: List[CharOpInput] = Field(default_factory=list)
+    class_id: Optional[int] = Field(default=None, ge=1, strict=True)
+    word_class: Optional[WordClassDescription] = None
+
+    @model_validator(mode="after")
+    def validate_class_description(self):
+        if self.word_class is not None and self.class_id is None:
+            raise ValueError("word_class requires class_id")
+        return self
+
 
 class WordOpInput(BaseModel):
+    transpose_parts: Optional[List[TranspositionPart]] = Field(default=None, min_length=2, max_length=2)
     op_type: WordOpType
     base_index: Optional[int] = None
     other_index: Optional[int] = None
@@ -133,9 +209,64 @@ class WordOpInput(BaseModel):
     other_token: Optional[str] = None
     base_paragraph_index: Optional[int] = None
     char_ops: List[CharOpInput] = []
+    class_id: Optional[int] = Field(default=None, ge=1, strict=True)
+
+    @model_validator(mode="after")
+    def equal_has_no_class(self):
+        if self.op_type == WordOpType.transpose:
+            if not self.transpose_parts:
+                raise ValueError("A transposition requires two replacement parts")
+            a, b = self.transpose_parts
+            if a.base_token == b.base_token or a.base_token != b.other_token or b.base_token != a.other_token:
+                raise ValueError("A transposition must swap two distinct, exactly matching adjacent tokens")
+            if self.base_token != f"{a.base_token} {b.base_token}" or self.other_token != f"{a.other_token} {b.other_token}":
+                raise ValueError("Transposition tokens must match its parts")
+            if self.base_paragraph_index != a.base_paragraph_index or self.base_index != a.base_index or self.other_index != a.other_index:
+                raise ValueError("Transposition position must match its first part")
+            for field in ("base_index", "other_index"):
+                first, second = getattr(a, field), getattr(b, field)
+                if first is not None and second is not None and second != first + 1:
+                    raise ValueError("Transposition indices must be adjacent")
+            if self.char_ops:
+                raise ValueError("Store character annotations in the transposition parts")
+        elif self.transpose_parts is not None:
+            raise ValueError("Only transpositions can contain replacement parts")
+        if self.op_type == WordOpType.equal and self.class_id is not None:
+            raise ValueError("Unchanged words cannot have a word-change class")
+        return self
 
 class ComparisonSaveRequest(BaseModel):
     word_ops: Optional[List[WordOpInput]] = None
+
+ComparisonTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+class ComparisonRenameRequest(BaseModel):
+    title: ComparisonTitle
+
+class ComparisonFontUpdate(BaseModel):
+    selected_font_id: Optional[int] = Field(..., ge=1, strict=True)
+
+class ImportedCharOp(CharOpInput):
+    class_id: Optional[int] = Field(default=None, ge=1, strict=True)
+
+class ImportedWordOp(WordOpInput):
+    base_index: Optional[int] = Field(default=None, ge=0, strict=True)
+    other_index: Optional[int] = Field(default=None, ge=0, strict=True)
+    base_paragraph_index: Optional[int] = Field(default=None, ge=0, strict=True)
+    char_ops: List[ImportedCharOp] = Field(default_factory=list)
+    word_class: Optional[WordClassDescription] = None
+
+    @model_validator(mode="after")
+    def validate_tokens(self):
+        if self.word_class is not None and self.class_id is None:
+            raise ValueError("word_class requires class_id")
+        if self.op_type != WordOpType.insert and not self.base_token:
+            raise ValueError("This operation requires a non-empty base_token")
+        if self.op_type != WordOpType.delete and not self.other_token:
+            raise ValueError("This operation requires a non-empty other_token")
+        if self.op_type == WordOpType.equal and self.base_token != self.other_token:
+            raise ValueError("An equal operation must contain identical tokens")
+        return self
 
 class CharDiffRequest(BaseModel):
     base_token: str
@@ -152,6 +283,7 @@ class CharOpRead(BaseModel):
         from_attributes = True
 
 class WordOpRead(BaseModel):
+    transpose_parts: Optional[List[TranspositionPart]] = None
     id: int
     op_type: WordOpType
     base_index: Optional[int]
@@ -160,14 +292,19 @@ class WordOpRead(BaseModel):
     other_token: Optional[str]
     base_paragraph_index: Optional[int]
     char_ops: List[CharOpRead] = []
+    class_id: Optional[int] = None
+    word_class: Optional[WordClassDescription] = None
 
     class Config:
         from_attributes = True
 
-class ComparisonRead(BaseModel):
+class ComparisonRead(TokenizationSettings):
     id: int
-    base_text_id: int
-    other_text_id: int
+    title: Optional[str] = None
+    base_text_id: Optional[int]
+    other_text_id: Optional[int]
+    saved: bool = False
+    dirty_for_preset: bool = False
     created_at: datetime
     weights: dict = {} # Flattened weights
     selected_font_id: Optional[int] = None
@@ -193,6 +330,12 @@ class ComparisonDetail(ComparisonRead):
 
 # Comparison Update Schemas
 
+class WordClassUpdate(BaseModel):
+    class_id: Optional[int] = Field(..., ge=1, strict=True)
+
+class WordClassBatchUpdate(WordClassUpdate):
+    word_op_ids: List[Annotated[int, Field(ge=1, strict=True)]] = Field(min_length=1, max_length=50000)
+
 class CharOpUpdate(BaseModel):
     class_id: Optional[int]
 
@@ -216,7 +359,11 @@ class CharOpGroupResponse(BaseModel):
 # Presets Schemas
 
 class PresetRuleBase(BaseModel):
-    op_type: OpType
+    kind: Literal["char", "word"] = "char"
+    op_type: Literal["change", "replace", "insert", "delete", "transpose"]
+    base_word: Optional[str] = None
+    other_word: Optional[str] = None
+    is_deleted: bool = False
     from_str: str
     to_str: str
     class_id: Optional[int]
@@ -249,12 +396,13 @@ class PresetRead(PresetBase):
         from_attributes = True
 
 class SaveAsPresetRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = None
 
 # Stats Schemas
 
 class StatsTotals(BaseModel):
+    transpose: int = 0
     replace: int
     insert: int
     delete: int
@@ -286,7 +434,7 @@ class ComparisonStats(BaseModel):
 
 # Matrix Schemas
 
-class DistanceMatrixRequest(BaseModel):
+class DistanceMatrixRequest(TokenizationSettings):
     text_ids: List[int]
     weights: Weights
     algorithm: ComparisonAlgorithm = ComparisonAlgorithm.levenshtein
@@ -298,14 +446,16 @@ class DistanceMatrixResponse(BaseModel):
 # Class Schemas
 
 class ClassBase(BaseModel):
-    code: str
-    display_name: str
-    color_hex: str
+    code: ClassCode
+    display_name: ClassName
+    color_hex: ClassColor
+    kind: ClassKind = ClassKind.char
 
 class ClassCreate(ClassBase):
-    pass
+    code: ClassCode = Field(default_factory=lambda: uuid.uuid4().hex)
 
 class ClassRead(ClassBase):
+    system_key: Optional[Literal["insignificant"]] = None
     id: int
     owner_user_id: Optional[int]
     is_global: bool = False
@@ -315,6 +465,6 @@ class ClassRead(ClassBase):
         from_attributes = True
 
 class ClassOverrideUpdate(BaseModel):
-    custom_display_name: Optional[str] = None
-    custom_color_hex: Optional[str] = None
+    custom_display_name: Optional[ClassName] = None
+    custom_color_hex: Optional[ClassColor] = None
     hidden: Optional[bool] = None

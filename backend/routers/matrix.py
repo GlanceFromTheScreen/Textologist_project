@@ -39,13 +39,14 @@ def run_matrix(
     # Tokenize all (cache)
     tokenized_texts = []
     for t in ordered_texts:
-        res = algo.tokenize_paragraphs(t.extracted_paragraphs_json)
+        res = algo.tokenize_paragraphs(t.extracted_paragraphs_json, request.separators)
         tokenized_texts.append(res.tokens)
         
     weights = algo.Weights(
         replace=request.weights.replace,
         delete=request.weights.delete,
         insert=request.weights.insert,
+        transpose=request.weights.transpose,
         char_replace=request.weights.char_replace,
         char_delete=request.weights.char_delete,
         char_insert=request.weights.char_insert,

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { apiErrorMessage, errorDetailMessage } from '@/lib/errors';
+import SeparatorPicker from '@/components/SeparatorPicker';
 import api, { API_URL } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 
@@ -20,6 +22,7 @@ interface Font {
 }
 
 export default function CompareSetupPage() {
+  const [separators, setSeparators] = useState<string[]>([' ']);
   const [texts, setTexts] = useState<Text[]>([]);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [fonts, setFonts] = useState<Font[]>([]);
@@ -31,6 +34,7 @@ export default function CompareSetupPage() {
   const [algorithm, setAlgorithm] = useState<string>('levenshtein');
   
   // Weights state
+  const [wTranspose, setWTranspose] = useState(1.0);
   const [wReplace, setWReplace] = useState(1.0);
   const [wDelete, setWDelete] = useState(1.0);
   const [wInsert, setWInsert] = useState(1.0);
@@ -100,15 +104,16 @@ export default function CompareSetupPage() {
     }
     if (msg.type === 'done' && msg.id != null) return { compId: msg.id };
     if (msg.type === 'error') {
-      return { error: new Error(typeof msg.detail === 'string' ? msg.detail : 'Comparison failed') };
+      return { error: new Error(errorDetailMessage(msg.detail, 'Не удалось выполнить сравнение')) };
     }
     return {};
   };
 
   const handleCompare = async () => {
+    if (!separators.length) return;
     if (!baseId || !otherId) return;
     if (baseId === otherId) {
-        alert("Please select different texts");
+        alert("Выберите разные тексты");
         return;
     }
 
@@ -123,8 +128,10 @@ export default function CompareSetupPage() {
       preset_id: presetId ? parseInt(presetId) : null,
       font_id: fontId ? parseInt(fontId) : null,
       algorithm: algorithm,
+      separators,
       weights: {
         replace: wReplace,
+        transpose: wTranspose,
         delete: wDelete,
         insert: wInsert,
         char_replace: wCharReplace,
@@ -147,12 +154,13 @@ export default function CompareSetupPage() {
       });
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(errText || `HTTP ${response.status}`);
+        if (response.status === 401) { localStorage.removeItem('token'); router.push('/login'); }
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(errorDetailMessage(errorBody?.detail, `Не удалось выполнить сравнение (код ${response.status}).`));
       }
 
       const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
+      if (!reader) throw new Error('Сервер не вернул результат');
 
       const decoder = new TextDecoder();
       let buffer = '';
@@ -183,7 +191,7 @@ export default function CompareSetupPage() {
       router.push(`/compare/${compId}`);
     } catch (err) {
       console.error(err);
-      alert(err instanceof Error ? err.message : 'Comparison failed');
+      alert(apiErrorMessage(err, 'Не удалось выполнить сравнение.'));
       setLoading(false);
       setProgressLabel('');
     }
@@ -193,20 +201,21 @@ export default function CompareSetupPage() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans text-slate-900">
       <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 max-w-lg w-full">
         <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-slate-900">New Comparison</h1>
-            <p className="text-slate-500 mt-1">Select two texts to analyze differences</p>
+            <h1 className="text-2xl font-bold text-slate-900">Новое сравнение</h1>
+            <p className="text-slate-500 mt-1">Выберите два текста для анализа различий</p>
         </div>
         
         <div className="space-y-6">
+            <SeparatorPicker value={separators} onChange={setSeparators} disabled={loading} />
             <div className="space-y-4">
                 <div className="relative">
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Base Text (Original)</label>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Основной текст (исходный)</label>
                     <select 
                         className="block w-full rounded-lg border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 py-2.5 px-3 bg-slate-50 text-slate-800 text-sm appearance-none"
                         value={baseId}
                         onChange={e => setBaseId(e.target.value)}
                     >
-                        <option value="">Select text...</option>
+                        <option value="">Выберите текст…</option>
                         {texts.map(t => (
                             <option key={t.id} value={t.id}>{t.title}</option>
                         ))}
@@ -220,13 +229,13 @@ export default function CompareSetupPage() {
                 </div>
 
                 <div className="relative">
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Comparison Text (New)</label>
+                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Сравниваемый текст (новый)</label>
                     <select 
                         className="block w-full rounded-lg border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 py-2.5 px-3 bg-slate-50 text-slate-800 text-sm appearance-none"
                         value={otherId}
                         onChange={e => setOtherId(e.target.value)}
                     >
-                        <option value="">Select text...</option>
+                        <option value="">Выберите текст…</option>
                         {texts.map(t => (
                             <option key={t.id} value={t.id}>{t.title}</option>
                         ))}
@@ -236,7 +245,7 @@ export default function CompareSetupPage() {
 
             <div className="border-t border-slate-100 pt-6 space-y-4">
                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Algorithm</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Алгоритм</label>
                     <div className="flex flex-wrap gap-4 mb-4">
                          <label className="flex items-center gap-2 cursor-pointer">
                              <input 
@@ -247,7 +256,7 @@ export default function CompareSetupPage() {
                                  onChange={e => setAlgorithm(e.target.value)}
                                  className="text-indigo-600 focus:ring-indigo-500"
                              />
-                             <span className="text-sm text-slate-700">Levenshtein</span>
+                             <span className="text-sm text-slate-700">Левенштейн</span>
                          </label>
                          <label className="flex items-center gap-2 cursor-pointer">
                              <input 
@@ -258,7 +267,7 @@ export default function CompareSetupPage() {
                                  onChange={e => setAlgorithm(e.target.value)}
                                  className="text-indigo-600 focus:ring-indigo-500"
                              />
-                             <span className="text-sm text-slate-700">Levenshtein Nested</span>
+                             <span className="text-sm text-slate-700">Левенштейн (вложенный)</span>
                          </label>
                          <label className="flex items-center gap-2 cursor-pointer">
                              <input 
@@ -269,7 +278,7 @@ export default function CompareSetupPage() {
                                  onChange={e => setAlgorithm(e.target.value)}
                                  className="text-indigo-600 focus:ring-indigo-500"
                              />
-                             <span className="text-sm text-slate-700">Levenshtein 2.0</span>
+                             <span className="text-sm text-slate-700">Левенштейн 2.0</span>
                          </label>
                          <label className="flex items-center gap-2 cursor-pointer">
                              <input 
@@ -280,14 +289,19 @@ export default function CompareSetupPage() {
                                  onChange={e => setAlgorithm(e.target.value)}
                                  className="text-indigo-600 focus:ring-indigo-500"
                              />
-                             <span className="text-sm text-slate-700">Myers (Fast)</span>
+                             <span className="text-sm text-slate-700">Майерс (быстрый)</span>
                          </label>
                     </div>
                     
+                    {algorithm !== 'myers' && <div className="mb-3">
+                      <label htmlFor="transpose-weight" className="block text-xs font-medium text-slate-500 mb-1">Перестановка соседних слов (Tr)</label>
+                      <input id="transpose-weight" type="number" min="0" step="0.1" value={wTranspose} onChange={e => setWTranspose(Number(e.target.value))} className="w-full border border-slate-200 rounded-md p-2 text-sm" />
+                      <p className="mt-1 text-xs text-slate-500">Точное совпадение слов. Во вложенном алгоритме стоимость масштабируется по различию слов.</p>
+                    </div>}
                     {(algorithm === 'levenshtein' || algorithm === 'levenshtein_nested') && (
                         <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
                             <div>
-                                <label className="block text-xs font-medium text-slate-500 mb-1">Replace</label>
+                                <label className="block text-xs font-medium text-slate-500 mb-1">Замена</label>
                                 <input 
                                     type="number" step="0.1" min="0"
                                     className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5"
@@ -296,7 +310,7 @@ export default function CompareSetupPage() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-500 mb-1">Delete</label>
+                                <label className="block text-xs font-medium text-slate-500 mb-1">Удаление</label>
                                 <input 
                                     type="number" step="0.1" min="0"
                                     className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5"
@@ -305,7 +319,7 @@ export default function CompareSetupPage() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-500 mb-1">Insert</label>
+                                <label className="block text-xs font-medium text-slate-500 mb-1">Вставка</label>
                                 <input 
                                     type="number" step="0.1" min="0"
                                     className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5"
@@ -318,13 +332,13 @@ export default function CompareSetupPage() {
                     {algorithm === 'levenshtein_v2' && (
                         <div className="space-y-3 bg-slate-50 p-3 rounded-lg border border-slate-100">
                             <p className="text-xs text-slate-500">
-                                Word costs scale token length (delete/insert) or the inner char edit distance (replace). Character weights apply only inside word replace.
+                                Стоимость удаления и вставки зависит от длины элемента, а замены — от посимвольного расстояния. Веса символов применяются внутри замены.
                             </p>
                             <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Word-level</p>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Словесные операции</p>
                                 <div className="grid grid-cols-3 gap-2">
                                     <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1">Replace</label>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Замена</label>
                                         <input 
                                             type="number" step="0.1" min="0"
                                             className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5 bg-white"
@@ -333,7 +347,7 @@ export default function CompareSetupPage() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1">Delete</label>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Удаление</label>
                                         <input 
                                             type="number" step="0.1" min="0"
                                             className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5 bg-white"
@@ -342,7 +356,7 @@ export default function CompareSetupPage() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1">Insert</label>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Вставка</label>
                                         <input 
                                             type="number" step="0.1" min="0"
                                             className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5 bg-white"
@@ -353,10 +367,10 @@ export default function CompareSetupPage() {
                                 </div>
                             </div>
                             <div>
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Character-level (inside replace)</p>
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Посимвольные операции внутри замены</p>
                                 <div className="grid grid-cols-3 gap-2">
                                     <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1">Char replace</label>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Замена символа</label>
                                         <input 
                                             type="number" step="0.1" min="0"
                                             className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5 bg-white"
@@ -365,7 +379,7 @@ export default function CompareSetupPage() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1">Char delete</label>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Удаление символа</label>
                                         <input 
                                             type="number" step="0.1" min="0"
                                             className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5 bg-white"
@@ -374,7 +388,7 @@ export default function CompareSetupPage() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-slate-500 mb-1">Char insert</label>
+                                        <label className="block text-xs font-medium text-slate-500 mb-1">Вставка символа</label>
                                         <input 
                                             type="number" step="0.1" min="0"
                                             className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-1.5 bg-white"
@@ -389,33 +403,33 @@ export default function CompareSetupPage() {
                 </div>
 
                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Preset (Optional)</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Пресет (необязательно)</label>
                     <select 
                         className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 py-2 px-3 bg-slate-50 text-sm"
                         value={presetId}
                         onChange={e => setPresetId(e.target.value)}
                     >
-                        <option value="">None (Use default classifier)</option>
+                        <option value="">Без пресета</option>
                         {presets.map(p => (
                             <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
                     </select>
-                    <p className="text-xs text-slate-400 mt-1">Apply saved rules for character classification.</p>
+                    <p className="text-xs text-slate-400 mt-1">Посимвольные правила применяются только в контексте слов; словесные — к паре слов. Оба вида работают в обе стороны.</p>
                 </div>
                 
                 <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Display Font (Optional)</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Шрифт (необязательно)</label>
                     <select 
                         className="block w-full rounded-md border-slate-200 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 py-2 px-3 bg-slate-50 text-sm"
                         value={fontId}
                         onChange={e => setFontId(e.target.value)}
                     >
-                        <option value="">Default System Font</option>
+                        <option value="">Системный шрифт</option>
                         {fonts.map(f => (
                             <option key={f.id} value={f.id}>{f.name}</option>
                         ))}
                     </select>
-                     <p className="text-xs text-slate-400 mt-1">Select a custom font for rendering the texts.</p>
+                     <p className="text-xs text-slate-400 mt-1">Выберите загруженный шрифт для отображения текстов.</p>
                 </div>
             </div>
 
@@ -438,7 +452,7 @@ export default function CompareSetupPage() {
                 )}
                 <button
                     onClick={handleCompare}
-                    disabled={!baseId || !otherId || loading}
+                    disabled={!baseId || !otherId || !separators.length || loading}
                     className="w-full bg-indigo-600 text-white py-3 rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-semibold shadow-sm transition-all active:scale-[0.98] flex justify-center items-center"
                 >
                     {loading ? (
@@ -449,11 +463,11 @@ export default function CompareSetupPage() {
                             </svg>
                             Выполняется сравнение…
                         </>
-                    ) : 'Run Comparison'}
+                    ) : 'Запустить сравнение'}
                 </button>
             </div>
              <div className="text-center">
-                <button onClick={() => router.push('/dashboard')} className="text-sm text-slate-500 hover:text-slate-800 transition-colors">Cancel</button>
+                <button onClick={() => router.push('/dashboard')} className="text-sm text-slate-500 hover:text-slate-800 transition-colors">Отмена</button>
             </div>
         </div>
       </div>

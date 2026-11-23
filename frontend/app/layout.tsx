@@ -4,7 +4,7 @@ import Navbar from "@/components/Navbar";
 
 export const metadata: Metadata = {
   title: "Textologist+",
-  description: "Advanced text comparison and analysis tool",
+  description: "Сравнение текстов и анализ разночтений",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="ru">
       <body className="bg-slate-50 text-slate-900 min-h-screen flex flex-col">
         {/* We will conditionally render Navbar inside pages or check auth, 
             but for simplicity let's put a global layout wrapper. 
@@ -25,7 +25,7 @@ export default function RootLayout({
             {children}
         </main>
         <footer className="py-6 text-center text-slate-400 text-sm">
-            © 2026 Textologist+. All rights reserved.
+            © 2026 Textologist+. Все права защищены.
         </footer>
       </body>
     </html>

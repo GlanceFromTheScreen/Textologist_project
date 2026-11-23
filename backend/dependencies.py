@@ -21,15 +21,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     try:
         payload = jwt.decode(token, utils.SECRET_KEY, algorithms=[utils.ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        user_id = payload.get("uid")
+        auth_version = payload.get("ver")
+        if type(user_id) is not int or type(auth_version) is not int:
             raise credentials_exception
-        token_data = schemas.TokenData(username=username)
     except JWTError:
         raise credentials_exception
-    
-    user = db.query(models.User).filter(models.User.username == token_data.username).first()
-    if user is None:
+
+    user = db.get(models.User, user_id)
+    if user is None or user.auth_version != auth_version:
         raise credentials_exception
     return user
 

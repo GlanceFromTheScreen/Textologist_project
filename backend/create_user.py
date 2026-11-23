@@ -15,17 +15,17 @@ from backend.database import SessionLocal
 
 def main() -> None:
     if len(sys.argv) < 3:
-        print("Usage: python backend/create_user.py <username> <password> [admin|textologist]")
+        print("Usage: python backend/create_user.py <username> <password> [admin|user]")
         sys.exit(1)
 
     username = sys.argv[1]
     password = sys.argv[2]
-    role_name = sys.argv[3] if len(sys.argv) > 3 else "textologist"
+    role_name = sys.argv[3] if len(sys.argv) > 3 else "user"
 
     try:
         role = models.UserRole(role_name)
     except ValueError:
-        print(f"Invalid role: {role_name}. Use 'admin' or 'textologist'.")
+        print(f"Invalid role: {role_name}. Use 'admin' or 'user'.")
         sys.exit(1)
 
     db = SessionLocal()
@@ -34,6 +34,7 @@ def main() -> None:
         if existing:
             existing.password_hash = utils.get_password_hash(password)
             existing.role = role
+            existing.auth_version += 1
             db.commit()
             print(f"Updated user '{username}' (role={role.value})")
         else:

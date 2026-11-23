@@ -31,7 +31,7 @@ def read_classes(
         read_cls.is_global = True
         
         # Apply override
-        if cls.id in overrides_map:
+        if cls.id in overrides_map and cls.system_key is None:
             o = overrides_map[cls.id]
             if o.custom_display_name:
                 read_cls.display_name = o.custom_display_name
@@ -66,7 +66,8 @@ def create_class(
         owner_user_id=current_user.id,
         code=cls_data.code,
         display_name=cls_data.display_name,
-        color_hex=cls_data.color_hex
+        color_hex=cls_data.color_hex,
+        kind=cls_data.kind.value,
     )
     db.add(new_cls)
     db.commit()
@@ -83,7 +84,8 @@ def create_global_class(
         owner_user_id=None, # Global
         code=cls_data.code,
         display_name=cls_data.display_name,
-        color_hex=cls_data.color_hex
+        color_hex=cls_data.color_hex,
+        kind=cls_data.kind.value,
     )
     db.add(new_cls)
     db.commit()
@@ -102,6 +104,9 @@ def update_class_override(
     if not base_cls:
          raise HTTPException(status_code=404, detail="Class not found")
     
+    if base_cls.system_key is not None:
+        raise HTTPException(422, "Built-in classes cannot be hidden or modified")
+
     if base_cls.owner_user_id is not None:
          # It's a user class, can't override another user's class (though expected flow is overriding global)
          # If it's own class, user should update it directly (not implemented here, but logical).
