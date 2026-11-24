@@ -2,7 +2,9 @@
 
 import { operationLabel } from '@/lib/labels';
 import { separatorLabel } from '@/components/SeparatorPicker';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, CSSProperties } from 'react';
+import SidebarResizeHandle from '@/components/SidebarResizeHandle';
+import ComparisonStatistics, { ComparisonStats, StatsFilter } from '@/components/ComparisonStatistics';
 import api from '@/lib/api';
 import WordClassSidebar, { WordClass, resolveWordClass, wordChangeLabel, isInsignificant } from '@/components/WordClassSidebar';
 import WordClassAnnotations from '@/components/WordClassAnnotations';
@@ -69,35 +71,6 @@ interface GroupItem {
     class_id: number | null;
 }
 
-// Stats interfaces
-interface ComparisonStats {
-    totals: {
-        replace: number;
-        transpose: number;
-        insert: number;
-        delete: number;
-    };
-    top_word_replacements: {
-        from_token: string;
-        to_token: string;
-        count: number;
-    }[];
-    top_char_ops: {
-        op_type: string;
-        from_str: string;
-        to_str: string;
-        count: number;
-        unique_contexts: number;
-        frequency: number;
-    }[];
-    class_distribution: {
-        class_id: number | null;
-        display_name: string;
-        color_hex: string;
-        count: number;
-    }[];
-}
-
 export default function ComparisonResultPage({ params }: { params: { id: string } }) {
   const [comp, setComp] = useState<Comparison | null>(null);
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -127,6 +100,9 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState<ComparisonStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
+  const [statsFilter, setStatsFilter] = useState<StatsFilter>('all');
+  const [statsPage, setStatsPage] = useState(1);
+  const [statsError, setStatsError] = useState('');
   
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWordIndices, setSelectedWordIndices] = useState<number[]>([]);
@@ -135,6 +111,10 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
   const [pdfExporting, setPdfExporting] = useState(false);
   const pdfExportRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  const [sidebarWidth, setSidebarWidth] = useState(384);
+  const [resizingSidebar, setResizingSidebar] = useState(false);
+  const sidebarOpen = selectedWordIndex !== null || !!selectedOp || showStats || (isEditMode && selectedWordIndices.length > 0);
 
   const router = useRouter();
 
@@ -174,19 +154,10 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
     }
   };
 
-  const loadStats = async () => {
-      setLoadingStats(true);
-      try {
-          const res = await api.get(`/comparisons/${params.id}/stats`);
-          setStats(res.data);
-      } catch (e) {
-          console.error(e);
-      } finally {
-          setLoadingStats(false);
-      }
-  };
-
   useEffect(() => {
+    setStatsFilter('all');
+    setStatsPage(1);
+    setStats(null);
     loadData();
   }, [params.id]);
 
@@ -231,10 +202,22 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
   }, [comp?.id, comp?.selected_font_id]);
 
   useEffect(() => {
-      if (showStats && !stats) {
-          loadStats();
-      }
-  }, [showStats]);
+    if (!showStats) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    setStatsError('');
+    setLoadingStats(true);
+    api.get(`/comparisons/${params.id}/stats`, {
+      params: { significance: statsFilter, page: statsPage }, signal: controller.signal,
+    }).then(response => {
+      if (!cancelled) setStats(response.data);
+    }).catch(error => {
+      if (!cancelled) setStatsError(apiErrorMessage(error, 'Не удалось загрузить статистику.'));
+    }).finally(() => {
+      if (!cancelled) setLoadingStats(false);
+    });
+    return () => { cancelled = true; controller.abort(); };
+  }, [showStats, statsFilter, statsPage, params.id, comp?.word_ops]);
 
   useEffect(() => {
     if (!exportMenuOpen) return;
@@ -319,8 +302,6 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
           }
           const compRes = await api.get(`/comparisons/${params.id}`);
           setComp(compRes.data);
-          // If stats are open, reload them to reflect changes
-          if (stats) loadStats();
           setSelectedOp(null);
       } catch (e) {
           console.error(e);
@@ -546,7 +527,8 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
   if (!comp) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex relative overflow-hidden font-sans text-slate-900">
+    <div className="comparison-layout min-h-screen bg-slate-50 flex relative overflow-hidden font-sans text-slate-900"
+      data-resizing={resizingSidebar} style={{ '--comparison-sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
        {fontFamily && (
            <style jsx global>{`
                .comparison-content {
@@ -558,11 +540,11 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
            `}</style>
        )}
 
-       <div className={`flex-1 p-8 transition-all duration-300 ${(selectedWordIndex !== null || selectedOp || showStats || (isEditMode && selectedWordIndices.length > 0)) ? 'md:mr-96' : ''}`}>
-          <div ref={pdfExportRef} className="max-w-6xl mx-auto bg-white p-8 rounded-xl shadow-sm min-h-[85vh] border border-slate-100 flex flex-col">
-              <div className="flex justify-between items-center mb-8 pb-4 border-b border-slate-100">
-                 <div className="flex items-center gap-4 flex-wrap">
-                     <div>
+       <div data-sidebar-open={sidebarOpen} className="comparison-workspace min-w-0 flex-1 p-4 sm:p-8 transition-[margin] duration-300">
+          <div ref={pdfExportRef} className="w-full min-w-0 max-w-6xl mx-auto bg-white p-4 sm:p-8 rounded-xl shadow-sm min-h-[85vh] border border-slate-100 flex flex-col">
+              <div className="flex flex-wrap gap-4 justify-between items-center mb-8 pb-4 border-b border-slate-100">
+                 <div className="min-w-0 flex items-center gap-4 flex-wrap">
+                     <div className="min-w-0 [overflow-wrap:anywhere]">
                         <h1 className="text-2xl font-bold text-slate-900 break-words">{comp.title || `Сравнение №${comp.id}`}</h1>
                         {(comp.base_text_title || comp.other_text_title) && (
                             <p className="text-sm text-slate-500 mt-1">
@@ -702,7 +684,7 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
                 const pairNumbers = new Map<number, number>();
                 comp.word_ops.forEach((word, index) => { if (word.op_type === 'transpose') pairNumbers.set(index, pairNumbers.size + 1); });
                 const renderToken = (op: WordOp, idx: number) => {
-                  if (op.op_type === 'equal') return <span key={idx} data-flow-index={idx} className="whitespace-pre-wrap mr-1.5 inline-block align-bottom leading-normal py-0.5 border-b-2 border-transparent">{op.base_token}</span>;
+                  if (op.op_type === 'equal') return <span key={idx} data-flow-index={idx} className="comparison-token-text whitespace-pre-wrap mr-1.5 inline-block align-bottom leading-normal py-0.5 border-b-2 border-transparent">{op.base_token}</span>;
                   if (isInsignificant(op, classes)) {
                     if (op.op_type === 'replace' || op.op_type === 'transpose') return <InsignificantReplacement key={idx} word={op} index={idx} classes={classes} pairNumber={pairNumbers.get(idx)} onSelect={() => handleWordClick(idx, op as UtilsWordOp)} />;
                     return <span key={idx} data-hidden-index={idx} aria-hidden="true" className="inline-block align-bottom w-0 h-0 overflow-hidden" />;
@@ -717,18 +699,18 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
                     title={cls?.display_name || 'Без класса'} aria-pressed={selected}
                     onClick={() => handleWordClick(idx, op as UtilsWordOp)}
                     style={{ backgroundColor: background, borderBottomColor: cls?.color_hex || background }}
-                    className={`whitespace-pre-wrap inline-block align-bottom leading-normal border-b-2 px-1.5 py-0.5 rounded-t cursor-pointer hover:brightness-95 focus-visible:outline-indigo-600 ${selected ? 'ring-2 ring-indigo-500 ring-offset-2' : ''} ${op.op_type === 'delete' ? 'text-rose-600 line-through decoration-rose-300 decoration-2' : op.op_type === 'insert' ? 'text-emerald-700' : 'text-slate-900'}`}>
+                    className={`comparison-token-text whitespace-pre-wrap inline-block align-bottom leading-normal border-b-2 px-1.5 py-0.5 rounded-t cursor-pointer hover:brightness-95 focus-visible:outline-indigo-600 ${selected ? 'ring-2 ring-indigo-500 ring-offset-2' : ''} ${op.op_type === 'delete' ? 'text-rose-600 line-through decoration-rose-300 decoration-2' : op.op_type === 'insert' ? 'text-emerald-700' : 'text-slate-900'}`}>
                     {op.op_type === 'insert' ? op.other_token : op.base_token}
                     {op.op_type === 'replace' && <span className="text-slate-400 mx-1.5 text-sm comparison-content">[{op.other_token}]</span>}
                   </button>;
                   if (op.op_type !== 'replace') return <span key={idx} className="mr-1.5 inline-flex align-bottom">{token}</span>;
-                  return <span key={idx} className="mr-1.5 inline-flex flex-col items-center align-bottom relative h-[3.5rem] justify-end">
-                    <span className="flex justify-center gap-[2px] mb-1 min-h-[18px]">
+                  return <span key={idx} className="mr-1.5 inline-flex flex-col items-center align-bottom relative min-h-[3.5rem] justify-end">
+                    <span className="comparison-char-ops flex flex-wrap justify-center gap-[2px] mb-1 min-h-[18px] max-w-full">
                       {op.char_ops.map((c, charIndex) => <button key={charIndex} type="button"
                         aria-label={`Посимвольное изменение: ${c.from_str || '∅'} → ${c.to_str || '∅'}`}
                         onClick={() => isEditMode ? handleWordClick(idx, op as UtilsWordOp) : handleBadgeClick(c)}
                         style={{ backgroundColor: getClassColor(c.class_id) }}
-                        className="char-op-badge min-w-[18px] h-[18px] px-1.5 flex items-center justify-center rounded text-[10px] border border-black/10 text-slate-900 font-bold whitespace-nowrap hover:shadow-sm">
+                        className="char-op-badge min-w-[18px] min-h-[18px] max-w-full px-1.5 flex items-center justify-center rounded text-[10px] leading-4 border border-black/10 text-slate-900 font-bold whitespace-pre-wrap [overflow-wrap:anywhere] hover:shadow-sm">
                         {c.op_type === 'change' ? `${c.from_str} → ${c.to_str}` : c.op_type === 'insert' ? `→ ${c.to_str}` : `${c.from_str} →`}
                       </button>)}
                     </span>
@@ -739,7 +721,7 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
                 return (
                   <div
                     ref={contentRef}
-                    className={`relative comparison-content text-[1.05rem] text-slate-800 flex-1 ${!fontFamily ? 'font-serif' : ''}`}
+                    className={`relative min-w-0 w-full comparison-content text-[1.05rem] text-slate-800 flex-1 ${!fontFamily ? 'font-serif' : ''}`}
                   >
                     <WordClassAnnotations contentRef={contentRef} words={comp.word_ops} classes={classes}
                       onAssign={handleAssignWordClassAt}
@@ -748,7 +730,7 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
                     {paragraphs.map((items, pIdx) => (
                       <div
                         key={pIdx}
-                        className={`flex gap-4 items-start ${pIdx === 0 ? '' : 'mt-6'}`}
+                        className={`min-w-0 flex gap-4 items-start ${pIdx === 0 ? '' : 'mt-6'}`}
                       >
                         <div className="w-16 shrink-0 text-right text-xs text-slate-400 select-none tabular-nums pt-2">
                           <RowClassAction number={pIdx + 1}
@@ -757,7 +739,7 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
                             unsaved={operationsDirty}
                             onApply={() => handleMakeRowInsignificant(items.map(item => item.idx))} />
                         </div>
-                        <div className="flex-1 min-w-0 leading-[2.5rem]">
+                        <div className="comparison-flow flex-1 min-w-0 leading-[2.5rem]">
                           {items.map(({ idx, op }) => renderToken(op, idx))}
                         </div>
                       </div>
@@ -768,7 +750,9 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
            </div>
        </div>
 
-       <div className={`fixed top-16 bottom-0 right-0 w-96 max-w-full bg-white shadow-2xl border-l border-slate-100 transform transition-transform duration-300 ease-in-out z-30 flex flex-col ${(selectedWordIndex !== null || selectedOp || showStats || (isEditMode && selectedWordIndices.length > 0)) ? 'translate-x-0' : 'translate-x-full'}`}>
+       <div id="comparison-sidebar" aria-hidden={!sidebarOpen} style={{ width: sidebarWidth }}
+         className={`fixed top-16 bottom-0 right-0 max-w-full bg-white shadow-2xl border-l border-slate-100 transform transition-transform duration-300 ease-in-out z-30 flex flex-col ${sidebarOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+           <SidebarResizeHandle width={sidebarWidth} enabled={sidebarOpen} onWidthChange={setSidebarWidth} onResizing={setResizingSidebar} />
            {selectedWordIndex !== null && comp.word_ops[selectedWordIndex] && <WordClassSidebar
              key={selectedWordIndex} word={comp.word_ops[selectedWordIndex]} classes={classes} unsaved={operationsDirty}
              onAssign={(classId, createdClass) => handleAssignWordClassAt(selectedWordIndex, classId, createdClass)} onCreate={cls => setClasses(current => [...current, { ...cls, is_global: false }])}
@@ -880,79 +864,12 @@ export default function ComparisonResultPage({ params }: { params: { id: string 
                <>
                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                        <h2 className="text-lg font-bold text-slate-900">Статистика</h2>
-                       <button onClick={() => setShowStats(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                       <button aria-label="Закрыть статистику" onClick={() => setShowStats(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                        </button>
                    </div>
-                   <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                       {stats && <div className="bg-violet-50 rounded-lg p-3 text-violet-800">Перестановки (Tr): <strong>{stats.totals.transpose}</strong></div>}
-                       {loadingStats || !stats ? (
-                           <div className="text-center py-10 text-slate-400">Загрузка статистики…</div>
-                       ) : (
-                           <>
-                               <div>
-                                   <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Общие итоги</label>
-                                   <div className="grid grid-cols-3 gap-3">
-                                       <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
-                                           <div className="text-xl font-bold text-slate-800">{stats.totals.replace}</div>
-                                           <div className="text-[10px] text-slate-500 uppercase">Замены</div>
-                                       </div>
-                                       <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
-                                            <div className="text-xl font-bold text-emerald-600">{stats.totals.insert}</div>
-                                           <div className="text-[10px] text-slate-500 uppercase">Вставки</div>
-                                       </div>
-                                       <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
-                                           <div className="text-xl font-bold text-rose-600">{stats.totals.delete}</div>
-                                           <div className="text-[10px] text-slate-500 uppercase">Удаления</div>
-                                       </div>
-                                   </div>
-                               </div>
-
-                               <div>
-                                   <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Частые посимвольные операции</label>
-                                   <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-                                       <table className="w-full text-sm">
-                                           <thead className="bg-slate-50 text-xs font-medium text-slate-500 uppercase">
-                                               <tr>
-                                                   <th className="px-3 py-2 text-left">Операция</th>
-                                                   <th className="px-3 py-2 text-right">Количество</th>
-                                                   <th className="px-3 py-2 text-right">Контексты</th>
-                                                   <th className="px-3 py-2 text-right">Частота</th>
-                                               </tr>
-                                           </thead>
-                                           <tbody className="divide-y divide-slate-100">
-                                               {stats.top_char_ops.map((op, i) => (
-                                                   <tr key={i} className="hover:bg-slate-50">
-                                                       <td className="px-3 py-2 font-mono text-slate-700">
-                                                            {op.op_type === 'change' ? `${op.from_str}→${op.to_str}` : op.op_type === 'insert' ? `→${op.to_str}` : `${op.from_str}→`}
-                                                       </td>
-                                                       <td className="px-3 py-2 text-right font-medium">{op.count}</td>
-                                                       <td className="px-3 py-2 text-right text-slate-500">{op.unique_contexts}</td>
-                                                       <td className="px-3 py-2 text-right text-slate-500">{(op.frequency * 100).toFixed(1)}%</td>
-                                                   </tr>
-                                               ))}
-                                           </tbody>
-                                       </table>
-                                   </div>
-                               </div>
-
-                               <div>
-                                   <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Распределение по классам</label>
-                                   <div className="space-y-2">
-                                       {stats.class_distribution.map((d, i) => (
-                                           <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
-                                               <div className="flex items-center gap-2">
-                                                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: d.color_hex }}></div>
-                                                   <span className="text-sm font-medium text-slate-700">{d.display_name}</span>
-                                               </div>
-                                               <span className="text-sm font-bold text-slate-600">{d.count}</span>
-                                           </div>
-                                       ))}
-                                   </div>
-                               </div>
-                           </>
-                       )}
-                   </div>
+                   <ComparisonStatistics stats={stats} loading={loadingStats} error={statsError} filter={statsFilter}
+                     onFilterChange={value => { setStatsFilter(value); setStatsPage(1); }} onPageChange={setStatsPage} unsaved={operationsDirty} />
                </>
            )}
        </div>
