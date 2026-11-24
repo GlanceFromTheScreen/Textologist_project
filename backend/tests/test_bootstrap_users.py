@@ -51,19 +51,40 @@ class DefaultUsersTests(ComparisonDatabaseTestCase):
         self.assertEqual(self.db.query(models.User).filter_by(bootstrap_key=accounts[0][0]).count(), 1)
         self.assertIsNone(self.db.query(models.User).filter_by(username=accounts[0][0]).first())
 
-    def test_unconfigured_passwords_do_not_seed_accounts(self):
-        before = self.db.query(models.User).count()
+    def test_unconfigured_passwords_seed_only_admin(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(configured_default_users(), ())
-            ensure_default_users(self.db)
-        self.assertEqual(self.db.query(models.User).count(), before)
+            self.assertEqual(configured_default_users(), (('admin', 'admin', models.UserRole.admin),))
 
-    def test_environment_is_read_at_startup_and_empty_passwords_are_skipped(self):
+    def test_empty_passwords_seed_only_admin(self):
+        with patch.dict(os.environ, {variable: '' for _, variable, _ in DEFAULT_USERS}, clear=True):
+            self.assertEqual(configured_default_users(), (('admin', 'admin', models.UserRole.admin),))
+
+    def test_environment_password_overrides_default_and_optional_users_still_work(self):
         password = secrets.token_urlsafe(20)
         with patch.dict(os.environ, {'BOOTSTRAP_ADMIN_PASSWORD': password, 'BOOTSTRAP_USER1_PASSWORD': ''}, clear=True):
             self.assertEqual(configured_default_users(), (('admin', password, models.UserRole.admin),))
         with patch.dict(os.environ, {'BOOTSTRAP_USER2_PASSWORD': password}, clear=True):
-            self.assertEqual(configured_default_users(), (('user2', password, models.UserRole.user),))
+            self.assertEqual(configured_default_users(), (
+                ('admin', 'admin', models.UserRole.admin),
+                ('user2', password, models.UserRole.user),
+            ))
+
+    def test_default_admin_password_logs_in_and_never_resets_managed_password(self):
+        # Isolate the startup account from real users in the test database.
+        username = self.user.username + '-default-admin'
+        with patch('backend.bootstrap_users.DEFAULT_USERS', ((username, 'BOOTSTRAP_ADMIN_PASSWORD', models.UserRole.admin),)):
+            with patch.dict(os.environ, {}, clear=True):
+                ensure_default_users(self.db)
+                created = self.db.query(models.User).filter_by(username=username).one()
+                self.assertEqual(created.role, models.UserRole.admin)
+                self.assertNotEqual(created.password_hash, 'admin')
+                token = login(OAuth2PasswordRequestForm(username=username, password='admin'), self.db)
+                self.assertTrue(token['access_token'])
+                created.password_hash = utils.get_password_hash('managed-password')
+                self.db.commit()
+                ensure_default_users(self.db)
+                self.assertTrue(utils.verify_password('managed-password', created.password_hash))
+                self.assertEqual(self.db.query(models.User).filter_by(username=username).count(), 1)
 
     def test_default_entry_point_uses_environment_password(self):
         username = self.user.username + '-configured'

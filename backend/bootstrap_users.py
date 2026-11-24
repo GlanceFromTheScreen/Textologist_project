@@ -11,12 +11,15 @@ DEFAULT_USERS = (
 
 
 def configured_default_users():
-    """Only seed explicitly configured accounts; never ship shared passwords."""
-    return tuple(
-        (name, password, role)
-        for name, variable, role in DEFAULT_USERS
-        if (password := os.environ.get(variable, ""))
-    )
+    """Seed admin by default; optional users still require configured passwords."""
+    accounts = []
+    for name, variable, role in DEFAULT_USERS:
+        password = os.environ.get(variable, "")
+        if not password and variable == 'BOOTSTRAP_ADMIN_PASSWORD':
+            password = 'admin'
+        if password:
+            accounts.append((name, password, role))
+    return tuple(accounts)
 
 
 def ensure_default_users(db, accounts=None):

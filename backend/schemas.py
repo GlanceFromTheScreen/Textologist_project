@@ -407,6 +407,12 @@ class StatsTotals(BaseModel):
     insert: int
     delete: int
 
+class StatsSignificanceTotals(BaseModel):
+    all: StatsTotals
+    insignificant: StatsTotals
+    significant: StatsTotals
+
+
 class TopWordReplacement(BaseModel):
     from_token: str
     to_token: str
@@ -426,11 +432,24 @@ class ClassDistributionItem(BaseModel):
     color_hex: str
     count: int
 
+class TopWordOp(ClassDistributionItem):
+    op_type: WordOpType
+    from_token: Optional[str]
+    to_token: Optional[str]
+
+
 class ComparisonStats(BaseModel):
     totals: StatsTotals
+    totals_by_significance: StatsSignificanceTotals
+    char_ops_page: int
+    char_ops_pages: int
+    char_ops_total: int
+    char_ops_page_size: int = 10
     top_word_replacements: List[TopWordReplacement]
     top_char_ops: List[TopCharOp]
     class_distribution: List[ClassDistributionItem]
+    top_word_ops: List[TopWordOp] = Field(default_factory=list)
+    word_class_distribution: List[ClassDistributionItem] = Field(default_factory=list)
 
 # Matrix Schemas
 

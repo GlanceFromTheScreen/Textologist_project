@@ -31,3 +31,44 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* Wrap display tokens within their original numbered paragraph. No text or
+   paragraph indices are changed; a replacement and its badges stay together. */
+.comparison-flow {
+  min-height: 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  column-gap: 0.375rem;
+  row-gap: 0.5rem;
+}
+
+.comparison-flow > :not([data-hidden-index]) {
+  min-width: 0;
+  max-width: 100%;
+  margin-right: 0;
+}
+
+.comparison-token-text {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Hidden changes keep their annotation anchor, without adding a word gap. */
+.comparison-flow > [data-hidden-index] {
+  margin-right: -0.375rem;
+}
+
+@media (min-width: 768px) {
+  .comparison-workspace[data-sidebar-open="true"] {
+    margin-right: var(--comparison-sidebar-width, 384px);
+  }
+}
+.comparison-layout[data-resizing="true"] {
+  cursor: col-resize;
+  user-select: none;
+}
+.comparison-layout[data-resizing="true"] .comparison-workspace {
+  transition: none;
+}
