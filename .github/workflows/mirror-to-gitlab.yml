@@ -132,9 +132,17 @@ jobs:
                   with urllib.request.urlopen(req, timeout=60) as resp:
                       return json.load(resp)
               except urllib.error.HTTPError as error:
-                  raise SystemExit(f'GitLab API {method}: HTTP {error.code} {error.reason}') from None
+                  try:
+                      body = json.load(error)
+                      detail = json.dumps({key: body[key] for key in ('message', 'error', 'error_description') if key in body}, ensure_ascii=False)
+                  except (ValueError, TypeError):
+                      detail = 'No JSON error details returned by the server.'
+                  detail = detail.replace(os.environ['GITLAB_TOKEN'], '[REDACTED]')[:1000]
+                  raise SystemExit(f'GitLab API {method}: HTTP {error.code} {error.reason}. {detail}') from None
 
           project_info = request('GET', api)
+          if project_info.get('merge_requests_access_level') == 'disabled' or project_info.get('merge_requests_enabled') is False:
+              raise SystemExit('Merge requests are disabled in the GitLab project. Enable them in Settings > General > Visibility, project features, permissions.')
           query = urllib.parse.urlencode({
               'state': 'opened', 'source_branch': source, 'target_branch': target, 'per_page': 100,
           })
