@@ -1,0 +1,169 @@
+# Copy the GitHub main tree onto GitLab history, then open/update an MR.
+# Only the dedicated sync/* branch may be overwritten. Never push GitLab main.
+name: Mirror to GitLab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-to-gitlab
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      GITLAB_HOST: ${{ secrets.GITLAB_HOST || 'git-ext.researchpark.ru' }}
+      GITLAB_PROJECT: ${{ secrets.GITLAB_PROJECT || 'teology/cir_textologist' }}
+      GITLAB_SYNC_BRANCH: ${{ secrets.GITLAB_SYNC_BRANCH || 'sync/from-github' }}
+      GITLAB_TARGET_BRANCH: ${{ secrets.GITLAB_TARGET_BRANCH || 'main' }}
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout GitHub main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Commit GitHub tree onto GitLab main
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GITLAB_TOKEN:-}" ]; then
+            echo '::error::GITLAB_TOKEN is missing. Add a GitHub Actions secret.'
+            exit 1
+          fi
+          if [[ "${GITLAB_SYNC_BRANCH}" != sync/* || "${GITLAB_SYNC_BRANCH}" == "${GITLAB_TARGET_BRANCH}" ]]; then
+            echo '::error::The source branch must start with sync/ and differ from the target branch.'
+            exit 1
+          fi
+          git check-ref-format "refs/heads/${GITLAB_SYNC_BRANCH}"
+          git check-ref-format "refs/heads/${GITLAB_TARGET_BRANCH}"
+
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          SOURCE_TREE="$(git rev-parse 'HEAD^{tree}')"
+          echo "source_sha=${SOURCE_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config core.autocrlf false
+
+          # HTTPS oauth2 authentication without putting the token in a URL or git config.
+          export GIT_ASKPASS="${RUNNER_TEMP}/gitlab-askpass.sh"
+          cat > "${GIT_ASKPASS}" <<'SH'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' oauth2 ;;
+            *Password*) printf '%s\n' "${GITLAB_TOKEN}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "${GIT_ASKPASS}"
+          trap 'rm -f "${GIT_ASKPASS}"' EXIT
+          git remote add gitlab "https://${GITLAB_HOST}/${GITLAB_PROJECT}.git"
+          git fetch --no-tags gitlab "+refs/heads/${GITLAB_TARGET_BRANCH}:refs/remotes/gitlab/${GITLAB_TARGET_BRANCH}"
+          TARGET_SHA="$(git rev-parse "refs/remotes/gitlab/${GITLAB_TARGET_BRANCH}")"
+          EXPECTED_SYNC_SHA="$(git ls-remote --heads gitlab "refs/heads/${GITLAB_SYNC_BRANCH}" | cut -f1)"
+
+          git checkout -B "${GITLAB_SYNC_BRANCH}" "${TARGET_SHA}"
+          git read-tree -u --reset "${SOURCE_SHA}"
+          git clean -fd
+          git add -A
+          if [ "$(git write-tree)" != "${SOURCE_TREE}" ]; then
+            echo '::error::Staged tree differs from GitHub main; refusing to push.'
+            exit 1
+          fi
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "${GITHUB_OUTPUT}"
+            echo "GitLab ${GITLAB_TARGET_BRANCH} already matches GitHub main."
+          else
+            git commit -m "Sync from GitHub main (${SHORT_SHA})"
+            test "$(git rev-parse HEAD^)" = "${TARGET_SHA}"
+            echo 'changed=true' >> "${GITHUB_OUTPUT}"
+          fi
+          # The lease also prevents overwriting a concurrent change to the sync branch.
+          git push --force-with-lease="refs/heads/${GITLAB_SYNC_BRANCH}:${EXPECTED_SYNC_SHA}" \
+            gitlab "HEAD:refs/heads/${GITLAB_SYNC_BRANCH}"
+          {
+            echo "GitHub main: ${SOURCE_SHA}"
+            echo "GitLab base: ${TARGET_SHA}"
+            echo "Identical file tree: ${SOURCE_TREE}"
+            echo "Pushed only: ${GITLAB_SYNC_BRANCH}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upsert GitLab merge request
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.sync.outputs.source_sha }}
+          SHORT_SHA: ${{ steps.sync.outputs.short_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          host = os.environ['GITLAB_HOST']
+          project = os.environ['GITLAB_PROJECT']
+          source = os.environ['GITLAB_SYNC_BRANCH']
+          target = os.environ['GITLAB_TARGET_BRANCH']
+          sha = os.environ['SOURCE_SHA']
+          short_sha = os.environ['SHORT_SHA']
+          api = f"https://{host}/api/v4/projects/{urllib.parse.quote(project, safe='')}"
+          headers = {'PRIVATE-TOKEN': os.environ['GITLAB_TOKEN'], 'Content-Type': 'application/json'}
+
+          def request(method, url, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      return json.load(resp)
+              except urllib.error.HTTPError as error:
+                  raise SystemExit(f'GitLab API {method}: HTTP {error.code} {error.reason}') from None
+
+          project_info = request('GET', api)
+          query = urllib.parse.urlencode({
+              'state': 'opened', 'source_branch': source, 'target_branch': target, 'per_page': 100,
+          })
+          existing = [mr for mr in request('GET', f'{api}/merge_requests?{query}')
+                      if mr['source_project_id'] == project_info['id']]
+          if len(existing) > 1:
+              raise SystemExit('More than one matching open MR; refusing to pick one arbitrarily.')
+          github_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/commit/{sha}"
+          description = (
+              f'Синхронизация дерева GitHub `main` поверх GitLab `{target}` одним коммитом.\n\n'
+              f'Источник: {github_url}\n\n'
+              'История GitHub не переносится. Родитель коммита — текущая целевая ветка GitLab.\n\n'
+              '**Влить вручную обычным merge, без squash. Не удалять source branch.**\n'
+              f'Не force-push-ить `{target}`. Автоматического merge нет.\n'
+          )
+          payload = {
+              'title': f'Sync from GitHub main ({short_sha})',
+              'description': description,
+              'remove_source_branch': False,
+              'squash': False,
+          }
+          if existing:
+              result = request('PUT', f"{api}/merge_requests/{existing[0]['iid']}", payload)
+              action = 'Updated'
+          else:
+              payload.update(source_branch=source, target_branch=target)
+              result = request('POST', f'{api}/merge_requests', payload)
+              action = 'Created'
+          print(f"{action} MR: {result['web_url']}")
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write(f"\n{action} MR: {result['web_url']}\n\nMerge manually, without squash; keep the source branch.\n")
+          PY
